@@ -1,0 +1,1 @@
+ALTER TABLE `trade_pairs` ADD `remaining_lots` int DEFAULT 0 NOT NULL;

@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1786616813132,
+      "tag": "0000_fat_marrow",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1786618496761,
+      "tag": "0001_trading_dashboard_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1786618647573,
+      "tag": "0002_watchdog_ledger_exports",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1786622459402,
+      "tag": "0003_hard_outlaw_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1786622599607,
+      "tag": "0004_silky_puma",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1786622649320,
+      "tag": "0005_daily_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1786623111367,
+      "tag": "0006_sparkling_morlun",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,341 @@
+import { createHmac, randomUUID } from "node:crypto";
+import { ENV } from "./_core/env";
+
+export type DeltaMode = "paper" | "demo" | "live";
+export type DeltaCredentialContext = { apiKey: string; apiSecret: string; baseUrl: string; mode: DeltaMode };
+
+export class DeltaApiError extends Error {
+  constructor(message: string, public readonly status?: number, public readonly code?: string) {
+    super(message);
+    this.name = "DeltaApiError";
+  }
+}
+
+export type DeltaQuote = {
+  symbol: string;
+  productId: number | null;
+  bid: number;
+  mark: number;
+  ask: number;
+};
+
+export type DeltaPosition = {
+  productId: number;
+  symbol: string;
+  size: number;
+  entryPrice: number;
+  realizedPnl: number;
+  raw: Record<string, unknown>;
+};
+
+export type DeltaOrder = Record<string, unknown> & {
+  id?: string | number;
+  size?: number | string;
+  unfilled_size?: number | string;
+  average_fill_price?: number | string;
+  state?: string;
+};
+
+type DeltaEnvelope<T> = { success?: boolean; result?: T; error?: { code?: string; context?: string } | string };
+
+function configuredMode(credentials?: DeltaCredentialContext): DeltaMode {
+  if (credentials) return credentials.mode;
+  const mode = ENV.deltaMode.toLowerCase();
+  if (mode === "demo" || mode === "live") return mode;
+  return "paper";
+}
+
+function numeric(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function defaultCredentials(): DeltaCredentialContext {
+  return { apiKey: ENV.deltaApiKey, apiSecret: ENV.deltaApiSecret, baseUrl: ENV.deltaBaseUrl, mode: configuredMode() };
+}
+
+function ensureCredentials(credentials: DeltaCredentialContext) {
+  if (!credentials.apiKey || !credentials.apiSecret) {
+    throw new DeltaApiError("Delta credentials are not configured on the server for this execution mode.");
+  }
+}
+
+function queryString(params?: Record<string, string | number | undefined>) {
+  if (!params) return "";
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+async function request<T>(
+  path: string,
+  options: { method?: "GET" | "POST" | "DELETE"; query?: Record<string, string | number | undefined>; body?: Record<string, unknown>; signed?: boolean; credentials?: DeltaCredentialContext } = {},
+): Promise<T> {
+  const method = options.method ?? "GET";
+  const query = queryString(options.query);
+  const body = options.body ? JSON.stringify(options.body) : "";
+  const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "TMT-Trade-Dashboard/1.0" };
+  if (body) headers["Content-Type"] = "application/json";
+
+  if (options.signed) {
+    const credentials = options.credentials ?? defaultCredentials();
+    ensureCredentials(credentials);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signingPayload = `${method}${timestamp}${path}${query}${body}`;
+    headers["api-key"] = credentials.apiKey;
+    headers.timestamp = timestamp;
+    headers.signature = createHmac("sha256", credentials.apiSecret).update(signingPayload).digest("hex");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${options.credentials?.baseUrl ?? ENV.deltaBaseUrl}${path}${query}`, {
+      method,
+      headers,
+      body: body || undefined,
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new DeltaApiError(`Delta ${method} request failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const responseText = await response.text();
+  let parsed: DeltaEnvelope<T>;
+  try {
+    parsed = JSON.parse(responseText) as DeltaEnvelope<T>;
+  } catch {
+    throw new DeltaApiError(`Delta returned a non-JSON response (${response.status}).`, response.status);
+  }
+  if (!response.ok || parsed.success === false) {
+    const error = parsed.error;
+    const code = typeof error === "object" ? error?.code : undefined;
+    const context = typeof error === "object" ? error?.context : error;
+    throw new DeltaApiError(`Delta request rejected: ${code ?? response.status} ${context ?? ""}`.trim(), response.status, code);
+  }
+  if (parsed.result === undefined) throw new DeltaApiError("Delta response did not contain a result payload.", response.status);
+  return parsed.result;
+}
+
+export function getDeltaRuntime(credentials?: DeltaCredentialContext) {
+  const mode = configuredMode(credentials);
+  return {
+    mode,
+    baseUrl: credentials?.baseUrl ?? ENV.deltaBaseUrl,
+    credentialsConfigured: Boolean(credentials?.apiKey ?? ENV.deltaApiKey) && Boolean(credentials?.apiSecret ?? ENV.deltaApiSecret),
+    liveTradingEnabled: ENV.liveTradingEnabled,
+    nativeBracketsEnabled: ENV.nativeBracketsEnabled,
+  };
+}
+
+export async function getTickers(symbols: string[], credentials?: DeltaCredentialContext) {
+  const requested = Array.from(new Set(symbols.filter(Boolean)));
+  if (!requested.length) return new Map<string, DeltaQuote>();
+  const result = await request<Array<Record<string, unknown>>>("/v2/tickers", {
+    query: { contracts: requested.join(",") },
+    credentials,
+  });
+  const quotes = new Map<string, DeltaQuote>();
+  for (const ticker of result) {
+    const symbol = String(ticker.symbol ?? "");
+    if (!symbol) continue;
+    const rawQuotes = (ticker.quotes ?? {}) as Record<string, unknown>;
+    quotes.set(symbol, {
+      symbol,
+      productId: ticker.product_id === undefined || ticker.product_id === null ? null : numeric(ticker.product_id),
+      bid: numeric(rawQuotes.best_bid),
+      mark: numeric(ticker.mark_price),
+      ask: numeric(rawQuotes.best_ask),
+    });
+  }
+  return quotes;
+}
+
+export async function getProducts(credentials?: DeltaCredentialContext) {
+  const result = await request<Array<Record<string, unknown>>>("/v2/products", { credentials });
+  return result;
+}
+
+export async function resolveProductIds(symbols: string[], credentials?: DeltaCredentialContext) {
+  const needed = new Set(symbols);
+  const products = await getProducts(credentials);
+  const resolved = new Map<string, { productId: number; symbol: string }>();
+  for (const product of products) {
+    const symbol = String(product.symbol ?? "");
+    const state = String(product.state ?? "live").toLowerCase();
+    if (!needed.has(symbol) || state !== "live") continue;
+    const productId = numeric(product.id ?? product.product_id);
+    if (productId > 0) resolved.set(symbol, { productId, symbol });
+  }
+  const unresolved = symbols.filter(symbol => !resolved.has(symbol));
+  if (unresolved.length) throw new DeltaApiError(`Unable to resolve active product ID(s): ${unresolved.join(", ")}`);
+  return resolved;
+}
+
+function normalizePosition(raw: Record<string, unknown>): DeltaPosition | null {
+  const productId = numeric(raw.product_id);
+  const symbol = String(raw.product_symbol ?? "");
+  if (!productId || !symbol) return null;
+  return {
+    productId,
+    symbol,
+    size: numeric(raw.size),
+    entryPrice: numeric(raw.entry_price),
+    realizedPnl: numeric(raw.realized_pnl),
+    raw,
+  };
+}
+
+export async function getPositionsForUnderlying(underlyingAssetSymbol = "BTC", credentials?: DeltaCredentialContext) {
+  const result = await request<Array<Record<string, unknown>>>("/v2/positions", {
+    query: { underlying_asset_symbol: underlyingAssetSymbol.toUpperCase() },
+    signed: true,
+    credentials,
+  });
+  return result.map(normalizePosition).filter((position): position is DeltaPosition => position !== null);
+}
+
+export async function getPosition(productId: number, credentials?: DeltaCredentialContext) {
+  const result = await request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
+    query: { product_id: productId },
+    signed: true,
+    credentials,
+  });
+  const raw = Array.isArray(result) ? result[0] : result;
+  const position = raw ? normalizePosition(raw) : null;
+  if (!position) throw new DeltaApiError(`Delta position lookup for product ${productId} returned invalid data.`);
+  return position;
+}
+
+export async function getShortBtcOptionCandidates(credentials?: DeltaCredentialContext) {
+  if (configuredMode(credentials) === "paper") throw new DeltaApiError("Manual Delta positions are unavailable while the account is in paper mode.");
+  const positions = await getPositionsForUnderlying("BTC", credentials);
+  return positions
+    .filter(position => position.size < 0 && /^(C|P)-BTC-/.test(position.symbol))
+    .map(position => ({
+      productId: position.productId,
+      symbol: position.symbol,
+      size: Math.abs(position.size),
+      signedSize: position.size,
+      entryPrice: position.entryPrice,
+      realizedPnl: position.realizedPnl,
+      optionType: position.symbol.startsWith("C-BTC-") ? ("CE" as const) : ("PE" as const),
+    }));
+}
+
+export async function verifyShortOption(productId: number, expectedPrefix: "C-BTC-" | "P-BTC-", credentials?: DeltaCredentialContext) {
+  const position = await getPosition(productId, credentials);
+  if (position.size >= 0 || !position.symbol.startsWith(expectedPrefix)) {
+    throw new DeltaApiError(`Product ${productId} is not an open short ${expectedPrefix.slice(0, 1)} BTC option.`);
+  }
+  let entryPrice = position.entryPrice;
+  if (entryPrice <= 0) {
+    const quote = (await getTickers([position.symbol], credentials)).get(position.symbol);
+    entryPrice = quote?.mark ?? 0;
+  }
+  if (entryPrice <= 0) throw new DeltaApiError(`${position.symbol} has no usable entry or mark price.`);
+  return { productId: position.productId, symbol: position.symbol, lots: Math.abs(position.size), entryPrice };
+}
+
+export async function placeOrder(input: {
+  productId: number;
+  symbol: string;
+  side: "buy" | "sell";
+  size: number;
+  orderType: "limit_order" | "market_order";
+  limitPrice?: number;
+  timeInForce?: "ioc" | "gtc";
+  reduceOnly?: boolean;
+  clientOrderId?: string;
+  credentials?: DeltaCredentialContext;
+}) {
+  if (input.size <= 0 || !Number.isInteger(input.size)) throw new DeltaApiError("Order size must be a positive whole number.");
+  if (input.orderType === "limit_order" && (!input.limitPrice || input.limitPrice <= 0)) {
+    throw new DeltaApiError("A positive limit price is required for a limit order.");
+  }
+  if (configuredMode(input.credentials) === "paper") throw new DeltaApiError("Paper mode never submits Delta orders.");
+  const result = await request<DeltaOrder>("/v2/orders", {
+    method: "POST",
+    signed: true,
+    credentials: input.credentials,
+    body: {
+      product_id: input.productId,
+      product_symbol: input.symbol,
+      size: input.size,
+      side: input.side,
+      order_type: input.orderType,
+      time_in_force: input.timeInForce ?? "ioc",
+      reduce_only: Boolean(input.reduceOnly),
+      post_only: false,
+      ...(input.limitPrice ? { limit_price: String(input.limitPrice) } : {}),
+      client_order_id: (input.clientOrderId ?? `tmt${randomUUID().replaceAll("-", "").slice(0, 28)}`).slice(0, 32),
+    },
+  });
+  return result;
+}
+
+export async function placeNativeBracket(input: {
+  productId: number;
+  symbol: string;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  triggerMethod?: "mark_price" | "last_traded_price" | "spot_price";
+  credentials?: DeltaCredentialContext;
+}) {
+  if (configuredMode(input.credentials) === "paper") throw new DeltaApiError("Paper mode never submits native Delta brackets.");
+  if (!ENV.nativeBracketsEnabled) throw new DeltaApiError("Native Delta brackets are disabled by server configuration.");
+  return request<Record<string, unknown>>("/v2/orders/bracket", {
+    method: "POST",
+    signed: true,
+    credentials: input.credentials,
+    body: {
+      product_id: input.productId,
+      product_symbol: input.symbol,
+      stop_loss_order: { order_type: "market_order", stop_price: String(input.stopLossPrice) },
+      take_profit_order: { order_type: "market_order", stop_price: String(input.takeProfitPrice) },
+      bracket_stop_trigger_method: input.triggerMethod ?? "mark_price",
+    },
+  });
+}
+
+export function filledSize(order: DeltaOrder) {
+  return Math.max(0, numeric(order.size) - numeric(order.unfilled_size));
+}
+
+export async function closeShortPosition(input: { productId: number; symbol: string; clientOrderId?: string; size?: number; credentials?: DeltaCredentialContext }) {
+  const position = await getPosition(input.productId, input.credentials);
+  if (position.size >= 0) return { skipped: true, reason: "position is already flat or no longer short", position } as const;
+  const positionSize = Math.abs(Math.trunc(position.size));
+  const size = input.size === undefined ? positionSize : Math.min(positionSize, Math.trunc(input.size));
+  if (size <= 0) return { skipped: true, reason: "requested partial-close quantity is zero", position } as const;
+  const order = await placeOrder({
+    productId: input.productId,
+    symbol: input.symbol,
+    side: "buy",
+    size,
+    orderType: "market_order",
+    timeInForce: "ioc",
+    reduceOnly: true,
+    clientOrderId: input.clientOrderId,
+    credentials: input.credentials,
+  });
+  if (filledSize(order) !== size) {
+    throw new DeltaApiError(`Reduce-only close for ${input.symbol} filled ${filledSize(order)}/${size}.`);
+  }
+  return { skipped: false, order, position } as const;
+}
+
+export function assertLiveCloseArmed(risk: { liveArmed: boolean }, credentials?: DeltaCredentialContext) {
+  const mode = configuredMode(credentials);
+  if (mode === "paper") throw new DeltaApiError("Paper mode is unable to close a live Delta position.");
+  if (mode !== "live") return;
+  if (!risk.liveArmed) throw new DeltaApiError("Live close actions are not armed in Risk Settings.");
+  if (!ENV.liveTradingEnabled || ENV.liveTradingAcknowledgement !== ENV.liveTradingAcknowledgementPhrase) {
+    throw new DeltaApiError("Live close actions are blocked until the server-side live-trading gates are explicitly armed.");
+  }
+  if (ENV.liveLots <= 0 || ENV.maxLiveLots <= 0 || ENV.liveLots > ENV.maxLiveLots) {
+    throw new DeltaApiError("Live lot safety limits are not configured correctly on the server.");
+  }
+}

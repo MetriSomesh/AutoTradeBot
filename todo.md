@@ -1,0 +1,36 @@
+# Project TODO
+
+- [x] Define hosted runtime behavior for a five-second Delta watchdog and document the required always-on hosting mode.
+- [x] Make the web service and five-second watchdog separately deployable so the user can host them on their own fixed-IP environment.
+- [x] Document self-hosted HTTPS, database, persistent-worker, automatic-restart, outbound-IP-whitelist, and secret-management requirements.
+- [x] Add owner-only database schema for trade pairs, leg snapshots, close events, risk settings, watchdog state, notifications, and export metadata.
+- [x] Add a dedicated watchdog state row for the latest control state, polling health, manual hold, close queue state, and profit-trailing tracking.
+- [x] Add a durable closed-trade ledger and export-job metadata for accurate history and generated-report tracking.
+- [x] Store Delta credentials exclusively as server-side secrets and prevent their exposure through all frontend/API payloads.
+- [x] Implement a server-side Delta client for public market data, authenticated position reads, product lookup, and reduce-only closes.
+- [x] Implement explicit manual CE/PE pair adoption with matching short lot-size validation and owner authorization.
+- [x] Implement a persistent watchdog lifecycle that polls adopted pairs every five seconds and records state idempotently.
+- [x] Enforce coupled two-times-entry stop loss, both-legs-at-or-below-$20 take profit, maximum loss, 01:00–03:00 IST profit trailing, and manual-hold semantics.
+- [x] Ensure Manual Hold suppresses only bot take-profit, trailing, and time exits, while preserving stop loss, maximum loss, native bracket visibility, and emergency controls.
+- [x] Require explicit confirmation before queueing a reduce-only close of the adopted pair.
+- [x] Build the dashboard close-position control with a real confirmation dialog that is wired to the confirmed reduce-only close queue.
+- [x] Build an owner-only dark monitoring dashboard with auto-refreshing leg values, P&L, risk state, protection state, and rolling history chart.
+- [x] Build trade controls, risk settings, manual adoption, trade history, and operational status pages.
+- [x] Add Excel-compatible trade-history and live-monitor exports backed by server-side data.
+- [x] Add owner notifications for stop loss, automatic close, emergency stop, and close failures.
+- [x] Add Vitest coverage for authenticated backend controls, risk logic, adoption, close queues, exports, and fail-closed behavior.
+- [x] Test the owner-only manual-adoption procedure, equal-lot rule, export procedure lifecycle, and watchdog failure-to-emergency paths.
+- [x] Verify the rendered interface, create a release checkpoint, and provide self-hosted activation instructions.
+- [x] Confirm whether self-hosted sign-up means retaining owner-only Manus OAuth or adding standalone local username/password accounts.
+- [x] Replace the self-hosted authentication path with standalone local sign-up/sign-in, an explicit first-admin bootstrap, hashed passwords, signed sessions, and account lockout controls.
+- [x] Add password-reset-ready account recovery tokens and self-hosted email delivery configuration documentation without storing reset tokens in plaintext.
+- [x] Add authenticated account-scoped bring-your-own-Delta-key onboarding and key management with encrypted-at-rest credential storage and server-only decryption.
+- [x] Add durable partial reduce-only close requests for 25%, 50%, 75%, and 100% of the adopted CE/PE pair, including confirmation and audit logging.
+- [x] Add Manual and Auto exit modes, with a server-side INR net-profit target field that closes the remaining adopted pair when the target is reached in Auto mode.
+- [x] Update the persistent worker, dashboard controls, tests, and self-hosted deployment documentation for the new credential, partial-close, and auto-target behavior.
+- [x] Evaluate Render backend plus Vercel/Netlify frontend deployment against the watchdog’s five-second polling, fixed-IP Delta allowlisting, encrypted credentials, and local-session requirements.
+- [x] Document a safe externally hosted topology or the required persistent-worker/fixed-egress alternative for live Delta operation.
+- [x] Document macOS installation, launchd auto-restart, sleep prevention, firewall, and secure phone-access requirements for running the API and five-second watchdog on a MacBook.
+- [x] Audit the repository for GitHub transfer, including source completeness and exclusion of credentials, logs, dependencies, and generated runtime data.
+- [x] Verify without reading values that no environment or secret-bearing files are tracked, and document the expected committed source versus excluded runtime paths.
+- [x] Provide a GitHub push and MacBook pull checklist for the approved release.
