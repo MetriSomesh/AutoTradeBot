@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { getWatchdogBadgePresentation } from "@/lib/watchdogDisplay";
 import { Activity, AlertTriangle, CircleOff, RefreshCw, ShieldCheck, XOctagon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -73,7 +74,9 @@ export default function Home() {
   const worker = status.data?.state;
   const net = Number(snapshot?.netInr ?? 0);
   const hasLiveSnapshot = Boolean(pair && snapshot);
-  const workerTone = worker?.status === "healthy" ? "text-[#3ddc84] border-[#3ddc84]/30 bg-[#3ddc84]/10" : worker?.status === "emergency" ? "text-[#ff6b6b] border-[#ff6b6b]/30 bg-[#ff6b6b]/10" : "text-[#D4734E] border-[#D4734E]/30 bg-[#D4734E]/10";
+  const workerStatus: string = worker?.status ?? "not_configured";
+  const workerBadge = getWatchdogBadgePresentation(workerStatus);
+  const workerTone = workerBadge.tone === "healthy" ? "text-[#3ddc84] border-[#3ddc84]/30 bg-[#3ddc84]/10" : workerBadge.tone === "emergency" ? "text-[#ff6b6b] border-[#ff6b6b]/30 bg-[#ff6b6b]/10" : workerBadge.tone === "neutral" ? "text-[#9a9aa2] border-[#3a3a42] bg-[#1a1a1e]" : "text-[#D4734E] border-[#D4734E]/30 bg-[#D4734E]/10";
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5 pb-8">
@@ -82,8 +85,8 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-bold tracking-[-0.03em] text-[#e8e8ea] sm:text-2xl">TMT BTC <span className="text-[#D4734E]">Decay-Sell</span> Monitor</h1>
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] ${workerTone}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${worker?.status === "healthy" ? "bg-[#3ddc84]" : worker?.status === "emergency" ? "bg-[#ff6b6b]" : "bg-[#D4734E]"}`} />
-              {worker?.status ?? "offline"}
+              <span className={`h-1.5 w-1.5 rounded-full ${workerBadge.dot === "healthy" ? "bg-[#3ddc84]" : workerBadge.dot === "emergency" ? "bg-[#ff6b6b]" : workerBadge.dot === "neutral" ? "bg-[#9a9aa2]" : "bg-[#D4734E]"}`} />
+              {workerBadge.label}
             </span>
           </div>
           <p className="mt-2 text-sm text-[#9a9aa2]">Five-second persistent watchdog · {runtime.data?.mode?.toUpperCase() ?? "UNAVAILABLE"} mode · server-side Delta access only</p>

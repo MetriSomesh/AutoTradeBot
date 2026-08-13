@@ -34,3 +34,6 @@
 - [x] Audit the repository for GitHub transfer, including source completeness and exclusion of credentials, logs, dependencies, and generated runtime data.
 - [x] Verify without reading values that no environment or secret-bearing files are tracked, and document the expected committed source versus excluded runtime paths.
 - [x] Provide a GitHub push and MacBook pull checklist for the approved release.
+- [x] Replace the misleading offline watchdog display with an explicit idle or not-configured state when no Delta key or adopted pair exists, including stale persisted offline records.
+- [x] Add regression coverage for the running-worker/no-key/no-adopted-pair dashboard status flow.
+- [x] Fix the Delta demo position invalid-date parsing error that blocks manual CE/PE pair adoption.

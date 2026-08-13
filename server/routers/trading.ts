@@ -27,6 +27,7 @@ import { buildLiveMonitorWorkbook, buildTradeHistoryWorkbook } from "../excel-ex
 import { credentialFingerprint, encryptCredential } from "../security";
 import { getUserDeltaCredentialStatus, getUserDeltaCredentials } from "../user-delta";
 import { protectedProcedure, router } from "../_core/trpc";
+import { resolveWorkspaceWatchdogState } from "../watchdog-status";
 
 function asTrpcError(error: unknown) {
   if (error instanceof TRPCError) return error;
@@ -177,9 +178,13 @@ export const tradingRouter = router({
   }),
   watchdog: router({
     status: protectedProcedure.query(async ({ ctx }) => {
-      const [state, pair] = await Promise.all([getWatchdogState(ctx.user.id), getActiveTradePair(ctx.user.id)]);
+      const [state, pair, credential] = await Promise.all([getWatchdogState(ctx.user.id), getActiveTradePair(ctx.user.id), getUserDeltaCredentialStatus(ctx.user.id)]);
       const snapshot = pair ? await getLatestTradeSnapshot(pair.id) : undefined;
-      return { state, pair, snapshot: snapshot ?? null };
+      return {
+        state: resolveWorkspaceWatchdogState({ persistedState: state, hasCredential: credential.configured, hasAdoptedPair: Boolean(pair) }),
+        pair,
+        snapshot: snapshot ?? null,
+      };
     }),
     history: protectedProcedure
       .input(z.object({ pairId: z.number().int().positive(), hours: z.number().int().min(1).max(24).default(6) }))

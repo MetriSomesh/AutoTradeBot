@@ -198,15 +198,33 @@ export async function getPositionsForUnderlying(underlyingAssetSymbol = "BTC", c
 }
 
 export async function getPosition(productId: number, credentials?: DeltaCredentialContext) {
-  const result = await request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
-    query: { product_id: productId },
-    signed: true,
-    credentials,
-  });
-  const raw = Array.isArray(result) ? result[0] : result;
-  const position = raw ? normalizePosition(raw) : null;
-  if (!position) throw new DeltaApiError(`Delta position lookup for product ${productId} returned invalid data.`);
-  return position;
+  let directFailure: unknown;
+  try {
+    const result = await request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
+      query: { product_id: productId },
+      signed: true,
+      credentials,
+    });
+    const raw = Array.isArray(result) ? result[0] : result;
+    const position = raw ? normalizePosition(raw) : null;
+    if (position) return position;
+    directFailure = new DeltaApiError(`Delta position lookup for product ${productId} returned invalid data.`);
+  } catch (error) {
+    directFailure = error;
+  }
+
+  // The India demo endpoint can reject product-specific option lookups with an
+  // `invalid_date` response. The underlying-scoped position list contains the
+  // same authoritative open position and is supported by both demo and live.
+  try {
+    const fallback = (await getPositionsForUnderlying("BTC", credentials)).find(position => position.productId === productId);
+    if (fallback) return fallback;
+  } catch (fallbackFailure) {
+    if (!directFailure) directFailure = fallbackFailure;
+  }
+
+  const detail = directFailure instanceof Error ? directFailure.message : "unknown lookup failure";
+  throw new DeltaApiError(`Delta position lookup for product ${productId} could not be verified: ${detail}`);
 }
 
 export async function getShortBtcOptionCandidates(credentials?: DeltaCredentialContext) {
