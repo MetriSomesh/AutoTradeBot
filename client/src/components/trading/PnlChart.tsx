@@ -1,10 +1,11 @@
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { IST_TIME_ZONE } from "@/lib/istTime";
 
 type PnlPoint = { capturedAt: Date; netInr: string };
 
 export function PnlChart({ points }: { points: PnlPoint[] }) {
   const data = points.map(point => ({
-    at: new Date(point.capturedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }),
+    at: new Date(point.capturedAt).toLocaleTimeString("en-IN", { timeZone: IST_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false }),
     net: Number(point.netInr),
   }));
 

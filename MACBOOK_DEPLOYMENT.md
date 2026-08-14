@@ -62,6 +62,25 @@ TZ=Asia/Kolkata date
 
 The watchdog remains running when a Delta GET request fails; it marks the pair **degraded**, stores an actionable error in Operational Status, and continues safe read-only polling. It does not submit a retry for any close or order request. If the dashboard reports an IP allowlist failure, update the Delta API key allowlist using the public IPv4 command above, wait for Delta to apply the change, and restart the worker.
 
+If Delta returns `ip_not_whitelisted_for_api_key`, this is not a dashboard-clock or pair-adoption issue: Delta is rejecting the MacBook network that is making the authenticated position request. Follow this exact sequence:
+
+```bash
+curl -4 https://api.ipify.org; echo
+```
+
+Add the returned IPv4 value to the allowlist for the same **demo or live** Delta API key stored in **Account & Keys**. Wait for Delta to apply the change, then restart the worker after rebuilding the current release:
+
+```bash
+cd ~/Applications/tmt-trading-dashboard
+pnpm run build
+set -a
+source "$HOME/Library/Application Support/TMT/tmt-dashboard.env"
+set +a
+pnpm run worker
+```
+
+All dashboard operational timestamps are explicitly rendered as `Asia/Kolkata` and labeled `IST`, independent of the phone or browser timezone. The database connection also serializes new application timestamps as UTC before the dashboard converts them to IST.
+
 ## 2. Keep the Mac awake and supervised
 
 The watchdog cannot operate while the MacBook is asleep, shut down, disconnected from the network, or logged out if you use user-level launch agents. Keep it connected to power and configure macOS to prevent automatic sleep while plugged in. A closed laptop lid can also suspend work unless you use supported external-power/display arrangements.

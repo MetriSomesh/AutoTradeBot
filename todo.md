@@ -41,3 +41,6 @@
 - [x] Diagnose Delta GET failures, expose actionable worker-state details, and ensure the worker remains supervised and fails closed after IP allowlist or network errors.
 - [x] Add a P&L Analytics page with bar charts, summary metrics, and filters for the last 7, 15, and 30 days plus all available history.
 - [x] Add IST, Delta failure, and P&L analytics regression coverage; verify the new interface and update MacBook operating guidance.
+- [x] Define and document a non-destructive local reset for a stale closed adopted pair that restores watchdog operation without deleting accounts, encrypted Delta credentials, or P&L history.
+- [x] Correct operational timestamp display to explicitly use Asia/Kolkata (IST) and investigate any MySQL timestamp offset on the MacBook.
+- [x] Improve the IP-allowlist watchdog recovery flow and document the exact Delta unblock-and-restart checks for a rejected authenticated position lookup.

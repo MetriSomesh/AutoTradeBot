@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { formatIstTime } from "@/lib/istTime";
 import { getWatchdogBadgePresentation } from "@/lib/watchdogDisplay";
 import { Activity, AlertTriangle, CircleOff, RefreshCw, ShieldCheck, XOctagon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -109,7 +110,7 @@ export default function Home() {
             <article className="monitor-card">
               <p className="monitor-label">BTC SPOT</p>
               <p className="mt-3 font-mono text-2xl font-bold tabular-nums text-[#e8e8ea]">{hasLiveSnapshot ? usd(Number(snapshot?.spot)) : "—"}</p>
-              <p className="mt-3 text-xs text-[#9a9aa2]">Last poll: {worker?.lastPollAt ? new Date(worker.lastPollAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "waiting"}</p>
+              <p className="mt-3 text-xs text-[#9a9aa2]">Last poll: {worker?.lastPollAt ? formatIstTime(worker.lastPollAt) : "waiting"}</p>
             </article>
             <article className="monitor-card">
               <p className="monitor-label">NET P&amp;L</p>
