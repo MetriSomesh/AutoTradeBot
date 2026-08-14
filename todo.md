@@ -44,3 +44,5 @@
 - [x] Define and document a non-destructive local reset for a stale closed adopted pair that restores watchdog operation without deleting accounts, encrypted Delta credentials, or P&L history.
 - [x] Correct operational timestamp display to explicitly use Asia/Kolkata (IST) and investigate any MySQL timestamp offset on the MacBook.
 - [x] Improve the IP-allowlist watchdog recovery flow and document the exact Delta unblock-and-restart checks for a rejected authenticated position lookup.
+- [x] Correct the Live Monitor rolling watchdog-history chart labels so snapshot times use explicit Asia/Kolkata (IST).
+- [x] Configure the MySQL client session timezone as UTC so valid watchdog snapshot instants are read correctly without rewriting historical snapshot rows.

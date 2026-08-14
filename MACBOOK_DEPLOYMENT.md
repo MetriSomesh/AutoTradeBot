@@ -81,6 +81,27 @@ pnpm run worker
 
 All dashboard operational timestamps are explicitly rendered as `Asia/Kolkata` and labeled `IST`, independent of the phone or browser timezone. The database connection also serializes new application timestamps as UTC before the dashboard converts them to IST.
 
+### Rolling NET P&L History shows a 5:30 offset
+
+Do **not** edit or subtract time from the `trade_snapshots` rows. On a self-hosted MySQL server configured for IST, those `TIMESTAMP` values can be presented by MySQL in the server-local clock unless the application connection explicitly sets its own session to UTC. The current release does that for every pooled database connection, so existing snapshots are read as their correct absolute instants and then rendered as IST in the Live Monitor.
+
+After updating to this release, stop both processes, rebuild once, and restart both:
+
+```bash
+cd ~/Applications/tmt-trading-dashboard
+pnpm run build
+
+# Terminal 1
+set -a; source "$HOME/Library/Application Support/TMT/tmt-dashboard.env"; set +a
+pnpm run start
+
+# Terminal 2
+set -a; source "$HOME/Library/Application Support/TMT/tmt-dashboard.env"; set +a
+pnpm run worker
+```
+
+The rolling chart labels should then match the current IST clock without changing trade-history records or snapshot data.
+
 ## 2. Keep the Mac awake and supervised
 
 The watchdog cannot operate while the MacBook is asleep, shut down, disconnected from the network, or logged out if you use user-level launch agents. Keep it connected to power and configure macOS to prevent automatic sleep while plugged in. A closed laptop lid can also suspend work unless you use supported external-power/display arrangements.

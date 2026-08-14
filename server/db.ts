@@ -21,6 +21,7 @@ import {
   workerLeases,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { configureMysqlUtcSession } from "./mysql-timezone";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -31,7 +32,11 @@ export async function getDb() {
       // Store and retrieve JavaScript Date values as UTC regardless of the
       // MacBook/MySQL host timezone. The UI converts those UTC instants to IST.
       const pool = createPool({ uri: process.env.DATABASE_URL, timezone: "Z" });
-      _db = drizzle({ client: pool });
+      // mysql2's `timezone` option controls Date serialization, but it does not
+      // change the MySQL server session. TIMESTAMP values must be selected in
+      // UTC too, otherwise a self-hosted MySQL server configured for IST sends
+      // local clock values that are interpreted again as UTC by the browser.
+      _db = drizzle({ client: configureMysqlUtcSession(pool) });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
