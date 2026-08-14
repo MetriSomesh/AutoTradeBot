@@ -11,6 +11,46 @@ export class DeltaApiError extends Error {
   }
 }
 
+const delay = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+function isTransientReadFailure(error: unknown) {
+  if (!(error instanceof DeltaApiError)) return false;
+  return error.status === undefined || error.status === 429 || error.status >= 500;
+}
+
+/** Retries only idempotent read operations; it is never used for orders or closes. */
+async function retryRead<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (firstError) {
+    if (!isTransientReadFailure(firstError)) throw firstError;
+    await delay(300);
+    return operation();
+  }
+}
+
+/** Produces a credential-safe remediation message for the persisted worker status. */
+export function describeDeltaConnectivityFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  if (/(ip|address).{0,40}(allow|white|restrict)|(?:allow|white).{0,40}(ip|address)/.test(normalized)) {
+    return "Delta rejected the request because the source IP is not allowlisted. Add this MacBook's current public IPv4 address to the Delta API key allowlist, wait for Delta to apply it, then restart the watchdog.";
+  }
+  if (error instanceof DeltaApiError && error.status === 401) {
+    return "Delta rejected the authenticated request. Confirm the selected demo/live key is active, has read permission, and its IP allowlist includes this MacBook's current public IPv4 address.";
+  }
+  if (error instanceof DeltaApiError && error.status === 429) {
+    return "Delta rate-limited a read request. The watchdog will keep polling; wait briefly and check the next status update.";
+  }
+  if (error instanceof DeltaApiError && error.status !== undefined && error.status >= 500) {
+    return "Delta returned a temporary server error. The watchdog will continue polling and resume monitoring after a valid response.";
+  }
+  if (error instanceof DeltaApiError && error.status === undefined) {
+    return "The watchdog could not reach Delta. Check the MacBook internet connection, DNS, and Delta availability; the worker will keep retrying read-only requests.";
+  }
+  return `Delta monitoring request failed: ${message}`;
+}
+
 export type DeltaQuote = {
   symbol: string;
   productId: number | null;
@@ -133,10 +173,10 @@ export function getDeltaRuntime(credentials?: DeltaCredentialContext) {
 export async function getTickers(symbols: string[], credentials?: DeltaCredentialContext) {
   const requested = Array.from(new Set(symbols.filter(Boolean)));
   if (!requested.length) return new Map<string, DeltaQuote>();
-  const result = await request<Array<Record<string, unknown>>>("/v2/tickers", {
+  const result = await retryRead(() => request<Array<Record<string, unknown>>>("/v2/tickers", {
     query: { contracts: requested.join(",") },
     credentials,
-  });
+  }));
   const quotes = new Map<string, DeltaQuote>();
   for (const ticker of result) {
     const symbol = String(ticker.symbol ?? "");
@@ -189,22 +229,22 @@ function normalizePosition(raw: Record<string, unknown>): DeltaPosition | null {
 }
 
 export async function getPositionsForUnderlying(underlyingAssetSymbol = "BTC", credentials?: DeltaCredentialContext) {
-  const result = await request<Array<Record<string, unknown>>>("/v2/positions", {
+  const result = await retryRead(() => request<Array<Record<string, unknown>>>("/v2/positions", {
     query: { underlying_asset_symbol: underlyingAssetSymbol.toUpperCase() },
     signed: true,
     credentials,
-  });
+  }));
   return result.map(normalizePosition).filter((position): position is DeltaPosition => position !== null);
 }
 
 export async function getPosition(productId: number, credentials?: DeltaCredentialContext) {
   let directFailure: unknown;
   try {
-    const result = await request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
+    const result = await retryRead(() => request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
       query: { product_id: productId },
       signed: true,
       credentials,
-    });
+    }));
     const raw = Array.isArray(result) ? result[0] : result;
     const position = raw ? normalizePosition(raw) : null;
     if (position) return position;

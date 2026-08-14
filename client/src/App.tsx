@@ -9,13 +9,14 @@ import Home from "./pages/Home";
 import ManualAdoption from "./pages/ManualAdoption";
 import NotFound from "./pages/NotFound";
 import OperationalStatus from "./pages/OperationalStatus";
+import PnlAnalytics from "./pages/PnlAnalytics";
 import RiskSettings from "./pages/RiskSettings";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import TradeHistory from "./pages/TradeHistory";
 
 function DashboardRoutes() {
-  return <DashboardLayout><Switch><Route path="/" component={Home} /><Route path="/adoption" component={ManualAdoption} /><Route path="/history" component={TradeHistory} /><Route path="/risk" component={RiskSettings} /><Route path="/status" component={OperationalStatus} /><Route path="/account" component={AccountSettings} /><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch></DashboardLayout>;
+  return <DashboardLayout><Switch><Route path="/" component={Home} /><Route path="/adoption" component={ManualAdoption} /><Route path="/history" component={TradeHistory} /><Route path="/analytics" component={PnlAnalytics} /><Route path="/risk" component={RiskSettings} /><Route path="/status" component={OperationalStatus} /><Route path="/account" component={AccountSettings} /><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch></DashboardLayout>;
 }
 
 function Router() {

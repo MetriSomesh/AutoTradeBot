@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createNotification, recordTradeEvent, updatePairRuntimeState, updateWatchdogState } from "./db";
+import { createNotification, getWatchdogState, recordTradeEvent, updatePairRuntimeState, updateWatchdogState } from "./db";
 import { dispatchOwnerAlert } from "./alerts";
 
 vi.mock("./db", async importActual => {
   const actual = await importActual<typeof import("./db")>();
-  return { ...actual, createNotification: vi.fn(), recordTradeEvent: vi.fn(), updatePairRuntimeState: vi.fn(), updateWatchdogState: vi.fn() };
+  return { ...actual, createNotification: vi.fn(), getWatchdogState: vi.fn(), recordTradeEvent: vi.fn(), updatePairRuntimeState: vi.fn(), updateWatchdogState: vi.fn() };
 });
 vi.mock("./alerts", () => ({ dispatchOwnerAlert: vi.fn() }));
 
@@ -14,6 +14,7 @@ describe("watchdog fail-closed transitions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(createNotification).mockResolvedValue({ id: 81, title: "TMT Watchdog Alert", body: "alert" } as never);
+    vi.mocked(getWatchdogState).mockResolvedValue(undefined);
     vi.mocked(recordTradeEvent).mockResolvedValue(undefined);
     vi.mocked(updatePairRuntimeState).mockResolvedValue(undefined);
     vi.mocked(updateWatchdogState).mockResolvedValue({} as never);
@@ -29,8 +30,17 @@ describe("watchdog fail-closed transitions", () => {
 
   it("records a degraded worker health state and owner alert when a market-data cycle fails", async () => {
     await markWatchdogDegraded(7, 44, new Error("BTCUSD quote unavailable"));
-    expect(updateWatchdogState).toHaveBeenCalledWith(7, expect.objectContaining({ pairId: 44, status: "degraded", lastError: "BTCUSD quote unavailable" }));
+    expect(updateWatchdogState).toHaveBeenCalledWith(7, expect.objectContaining({ pairId: 44, status: "degraded", lastError: expect.stringContaining("Delta monitoring request failed") }));
     expect(recordTradeEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "WATCHDOG_ERROR", level: "critical" }));
     expect(dispatchOwnerAlert).toHaveBeenCalledWith(expect.objectContaining({ id: 81 }));
+  });
+
+  it("does not flood alerts when the same degraded state repeats", async () => {
+    const message = "Delta monitoring request failed: BTCUSD quote unavailable";
+    vi.mocked(getWatchdogState).mockResolvedValue({ status: "degraded", lastError: message } as never);
+    await markWatchdogDegraded(7, 44, new Error("BTCUSD quote unavailable"));
+    expect(updateWatchdogState).toHaveBeenCalledWith(7, expect.objectContaining({ status: "degraded", lastError: message }));
+    expect(recordTradeEvent).not.toHaveBeenCalled();
+    expect(dispatchOwnerAlert).not.toHaveBeenCalled();
   });
 });

@@ -37,3 +37,7 @@
 - [x] Replace the misleading offline watchdog display with an explicit idle or not-configured state when no Delta key or adopted pair exists, including stale persisted offline records.
 - [x] Add regression coverage for the running-worker/no-key/no-adopted-pair dashboard status flow.
 - [x] Fix the Delta demo position invalid-date parsing error that blocks manual CE/PE pair adoption.
+- [x] Correct all strategy exit-window and 03:00 hard-exit evaluation to use Asia/Kolkata (IST) regardless of the MacBook or server timezone.
+- [x] Diagnose Delta GET failures, expose actionable worker-state details, and ensure the worker remains supervised and fails closed after IP allowlist or network errors.
+- [x] Add a P&L Analytics page with bar charts, summary metrics, and filters for the last 7, 15, and 30 days plus all available history.
+- [x] Add IST, Delta failure, and P&L analytics regression coverage; verify the new interface and update MacBook operating guidance.

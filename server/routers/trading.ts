@@ -15,6 +15,7 @@ import {
   getWatchdogState,
   listClosedTrades,
   listNotifications,
+  listRealizedPnlEvents,
   listRecentTradeSnapshots,
   queueCloseRequest,
   recordTradeEvent,
@@ -28,6 +29,7 @@ import { credentialFingerprint, encryptCredential } from "../security";
 import { getUserDeltaCredentialStatus, getUserDeltaCredentials } from "../user-delta";
 import { protectedProcedure, router } from "../_core/trpc";
 import { resolveWorkspaceWatchdogState } from "../watchdog-status";
+import { buildPnlAnalytics } from "../pnl-analytics";
 
 function asTrpcError(error: unknown) {
   if (error instanceof TRPCError) return error;
@@ -223,6 +225,13 @@ export const tradingRouter = router({
   }),
   history: router({
     closedTrades: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(250).default(100) })).query(({ ctx, input }) => listClosedTrades(ctx.user.id, input.limit)),
+    analytics: protectedProcedure
+      .input(z.object({ range: z.enum(["7d", "15d", "30d", "all"]).default("7d") }))
+      .query(async ({ ctx, input }) => {
+        const days = input.range === "all" ? null : Number.parseInt(input.range, 10);
+        const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1_000) : undefined;
+        return { range: input.range, ...buildPnlAnalytics(await listRealizedPnlEvents(ctx.user.id, since)) };
+      }),
   }),
   exports: router({
     tradeHistory: protectedProcedure.mutation(async ({ ctx }) => {

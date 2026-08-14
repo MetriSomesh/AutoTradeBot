@@ -28,6 +28,8 @@ export type ExitDecision = {
   nextProfitHighInr: number | null;
 };
 
+export const IST_TIME_ZONE = "Asia/Kolkata";
+
 export function calculatePartialCloseLots(remainingLots: number, closePercent: 25 | 50 | 75 | 100) {
   const safeLots = Math.max(0, Math.trunc(remainingLots));
   if (!safeLots) return 0;
@@ -49,7 +51,7 @@ export function calculatePairPnl(pricing: PairPricing, usdInr: number): PnlCalcu
 
 function istClock(now: Date) {
   const parts = new Intl.DateTimeFormat("en-IN", {
-    timeZone: "Asia/Kolkata",
+    timeZone: IST_TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
@@ -64,9 +66,39 @@ export function isOvernightProfitWindow(now: Date) {
   return minutes >= 60 && minutes < 180;
 }
 
-export function isAfterThreeAmIst(now: Date) {
-  const { hour, minute } = istClock(now);
-  return hour > 3 || (hour === 3 && minute >= 0);
+function istCalendar(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: IST_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const value = (type: string) => Number(parts.find(part => part.type === type)?.value ?? "0");
+  return { year: value("year"), month: value("month"), day: value("day"), hour: value("hour"), minute: value("minute") };
+}
+
+function compareIstDates(left: { year: number; month: number; day: number }, right: { year: number; month: number; day: number }) {
+  const leftValue = left.year * 10_000 + left.month * 100 + left.day;
+  const rightValue = right.year * 10_000 + right.month * 100 + right.day;
+  return Math.sign(leftValue - rightValue);
+}
+
+/**
+ * The hard exit is due at the first 03:00 IST following pair adoption. The
+ * former `hour >= 3` check was unsafe: it was also true at 23:57 IST and could
+ * close a newly adopted evening position immediately.
+ */
+export function isThreeAmIstExitDue(now: Date, positionOpenedAt: Date) {
+  const opened = istCalendar(positionOpenedAt);
+  const openedMinutes = opened.hour * 60 + opened.minute;
+  const firstExitDate = new Date(Date.UTC(opened.year, opened.month - 1, opened.day + (openedMinutes < 180 ? 0 : 1)));
+  const targetDate = { year: firstExitDate.getUTCFullYear(), month: firstExitDate.getUTCMonth() + 1, day: firstExitDate.getUTCDate() };
+  const current = istCalendar(now);
+  const dateComparison = compareIstDates(current, targetDate);
+  return dateComparison > 0 || (dateComparison === 0 && current.hour * 60 + current.minute >= 180);
 }
 
 export function evaluateExit(input: {
@@ -75,6 +107,7 @@ export function evaluateExit(input: {
   risk: RiskInputs;
   manualHold: boolean;
   priorProfitHighInr: number | null;
+  positionOpenedAt?: Date;
   now?: Date;
 }): ExitDecision {
   const now = input.now ?? new Date();
@@ -109,7 +142,7 @@ export function evaluateExit(input: {
       nextProfitHighInr,
     };
   }
-  if (isAfterThreeAmIst(now)) {
+  if (input.positionOpenedAt && isThreeAmIstExitDue(now, input.positionOpenedAt)) {
     return { action: "time_exit", reason: "03:00 IST hard time exit reached.", shouldClose: true, nextProfitHighInr };
   }
   return { action: "none", reason: "No automated exit condition is met.", shouldClose: false, nextProfitHighInr };

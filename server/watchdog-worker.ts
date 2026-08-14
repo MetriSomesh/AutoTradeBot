@@ -5,6 +5,7 @@ import { dispatchOwnerAlert } from "./alerts";
 import {
   assertLiveCloseArmed,
   closeShortPosition,
+  describeDeltaConnectivityFailure,
   DeltaApiError,
   getDeltaRuntime,
   getPosition,
@@ -106,7 +107,8 @@ export async function markEmergency(ownerId: number, pairId: number, reason: str
 }
 
 export async function markWatchdogDegraded(ownerId: number, pairId: number, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = describeDeltaConnectivityFailure(error);
+  const prior = await getWatchdogState(ownerId);
   await updateWatchdogState(ownerId, {
     pairId,
     status: "degraded",
@@ -114,14 +116,18 @@ export async function markWatchdogDegraded(ownerId: number, pairId: number, erro
     workerId: WORKER_ID,
     lastError: message,
   });
-  await recordSafetyEvent({
-    ownerId,
-    pairId,
-    level: "critical",
-    type: "WATCHDOG_ERROR",
-    message: `Watchdog cycle failed closed: ${message}`,
-    notify: true,
-  });
+  // Persist every failed poll, but avoid an event and notification flood while
+  // an IP allowlist or connection problem remains unchanged.
+  if (prior?.status !== "degraded" || prior.lastError !== message) {
+    await recordSafetyEvent({
+      ownerId,
+      pairId,
+      level: "critical",
+      type: "WATCHDOG_ERROR",
+      message: `Watchdog monitoring is paused until Delta read access recovers: ${message}`,
+      notify: true,
+    });
+  }
 }
 
 export async function closePair(input: {
@@ -260,6 +266,7 @@ async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof getActiv
       risk: { usdInr: asNumber(risk.usdInr), maxTradeLossInr: asNumber(risk.maxTradeLossInr), profitTrailStartInr: asNumber(risk.profitTrailStartInr), profitTrailDrawdownInr: asNumber(risk.profitTrailDrawdownInr) },
       manualHold: manualExitMode,
       priorProfitHighInr: asNumber(watchdog.profitHighInr) || null,
+      positionOpenedAt: pair.createdAt,
     });
     const target = asNumber(risk.autoProfitTargetInr);
     const autoTargetReached = shouldCloseAtAutoProfitTarget({ exitMode: risk.exitMode, targetInr: target, netInr: pnl.netInr });

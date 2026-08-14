@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculatePairPnl, calculatePartialCloseLots, evaluateExit, shouldCloseAtAutoProfitTarget } from "./strategy";
+import { calculatePairPnl, calculatePartialCloseLots, evaluateExit, isThreeAmIstExitDue, shouldCloseAtAutoProfitTarget } from "./strategy";
 
 const pricing = { ceEntry: 100, peEntry: 100, ceMark: 95, peMark: 95, spot: 65_000, lots: 120 };
 const risk = { usdInr: 83, maxTradeLossInr: 1_200, profitTrailStartInr: 600, profitTrailDrawdownInr: 300 };
@@ -31,6 +31,16 @@ describe("TMT exit policy", () => {
     expect(takeProfit).toMatchObject({ action: "none", shouldClose: false });
     const timeExit = evaluateExit({ pricing, pnl: calculatePairPnl(pricing, 83), risk, manualHold: true, priorProfitHighInr: null, now: threeAm });
     expect(timeExit).toMatchObject({ action: "none", shouldClose: false });
+  });
+
+  it("does not treat 23:57 IST as after the following 03:00 IST exit", () => {
+    const adoptedAt = new Date("2026-08-10T18:27:00.000Z"); // 23:57 IST
+    const beforeMidnight = new Date("2026-08-10T18:28:00.000Z"); // 23:58 IST
+    const afterFirstThreeAm = new Date("2026-08-10T21:31:00.000Z"); // 03:01 IST the next day
+    expect(isThreeAmIstExitDue(beforeMidnight, adoptedAt)).toBe(false);
+    expect(isThreeAmIstExitDue(afterFirstThreeAm, adoptedAt)).toBe(true);
+    const decision = evaluateExit({ pricing, pnl: calculatePairPnl(pricing, 83), risk, manualHold: false, priorProfitHighInr: null, positionOpenedAt: adoptedAt, now: beforeMidnight });
+    expect(decision).toMatchObject({ action: "none", shouldClose: false });
   });
 
   it("applies both-legs take profit and intrawindow profit trailing when Manual Hold is disabled", () => {

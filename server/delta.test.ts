@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV } from "./_core/env";
-import { assertLiveCloseArmed, getTickers, verifyShortOption } from "./delta";
+import { assertLiveCloseArmed, describeDeltaConnectivityFailure, getTickers, verifyShortOption } from "./delta";
 
 const originalFetch = global.fetch;
 const originalKey = ENV.deltaApiKey;
@@ -29,6 +29,22 @@ describe("Delta response boundary", () => {
     const quotes = await getTickers(["C-BTC-65000-010126"]);
     expect(quotes.get("C-BTC-65000-010126")).toEqual({ symbol: "C-BTC-65000-010126", productId: 42, bid: 92, mark: 93.5, ask: 95 });
     expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty("api-key");
+  });
+
+  it("retries a transient read-only ticker request exactly once", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network changed"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [{ symbol: "BTCUSD", product_id: 1, mark_price: "65000", quotes: {} }] }), { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+    const quotes = await getTickers(["BTCUSD"]);
+    expect(quotes.get("BTCUSD")).toMatchObject({ mark: 65000 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives an actionable but credential-safe message for an IP allowlist rejection", () => {
+    const message = describeDeltaConnectivityFailure(new Error("Delta request rejected: forbidden IP address is not whitelisted"));
+    expect(message).toContain("source IP is not allowlisted");
+    expect(message).not.toContain("api-key");
   });
 
   it("accepts only a verified open short of the requested option type for manual adoption", async () => {

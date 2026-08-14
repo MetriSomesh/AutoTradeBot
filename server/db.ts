@@ -475,6 +475,33 @@ export async function listClosedTrades(ownerId: number, limit = 100) {
     .limit(Math.min(Math.max(limit, 1), 250));
 }
 
+export type RealizedPnlEvent = {
+  id: number;
+  source: "full_close" | "partial_close";
+  occurredAt: Date;
+  netInr: string;
+  feesInr: string;
+};
+
+/** Returns only persisted, account-owned realized P&L events; no mark-to-market estimates are mixed in. */
+export async function listRealizedPnlEvents(ownerId: number, since?: Date) {
+  const db = await requireDb();
+  const fullCloseWhere = since
+    ? and(eq(closedTrades.ownerId, ownerId), gte(closedTrades.closedAt, since))
+    : eq(closedTrades.ownerId, ownerId);
+  const partialCloseWhere = since
+    ? and(eq(partialCloses.ownerId, ownerId), gte(partialCloses.completedAt, since))
+    : eq(partialCloses.ownerId, ownerId);
+  const [fullCloses, partialCloseRows] = await Promise.all([
+    db.select({ id: closedTrades.id, occurredAt: closedTrades.closedAt, netInr: closedTrades.netInr, feesInr: closedTrades.feesInr }).from(closedTrades).where(fullCloseWhere),
+    db.select({ id: partialCloses.id, occurredAt: partialCloses.completedAt, netInr: partialCloses.netInr, feesInr: partialCloses.feesInr }).from(partialCloses).where(partialCloseWhere),
+  ]);
+  return [
+    ...fullCloses.map(row => ({ ...row, source: "full_close" as const })),
+    ...partialCloseRows.map(row => ({ ...row, source: "partial_close" as const })),
+  ].sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime()) satisfies RealizedPnlEvent[];
+}
+
 export async function recordTradeEvent(input: {
   ownerId: number;
   pairId?: number;

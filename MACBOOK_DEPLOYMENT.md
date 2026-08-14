@@ -43,6 +43,25 @@ At minimum, the file needs `DATABASE_URL`, `JWT_SECRET`, and `TMT_CREDENTIAL_ENC
 
 > The MacBook must use a stable public egress IP. Check the public IP from the MacBook’s actual network and add it to the Delta API key allowlist. A home ISP may change the IP after a router reconnect; if it does, Delta requests will fail until the allowlist is updated.
 
+```bash
+curl -4 https://api.ipify.org; echo
+```
+
+## IST time policy
+
+All strategy time logic is evaluated with the fixed `Asia/Kolkata` time zone, rather than the MacBook’s local time-zone setting. The 03:00 exit is calculated as the **first 03:00 IST after the pair is adopted**. This prevents an evening adoption—for example, 23:57 IST—from being mistaken for “after 03:00” and being closed immediately.
+
+Before enabling Auto mode after an operating-system update or a long period offline, verify that the MacBook clock itself is accurate:
+
+```bash
+date -u
+TZ=Asia/Kolkata date
+```
+
+## Delta read-access recovery
+
+The watchdog remains running when a Delta GET request fails; it marks the pair **degraded**, stores an actionable error in Operational Status, and continues safe read-only polling. It does not submit a retry for any close or order request. If the dashboard reports an IP allowlist failure, update the Delta API key allowlist using the public IPv4 command above, wait for Delta to apply the change, and restart the worker.
+
 ## 2. Keep the Mac awake and supervised
 
 The watchdog cannot operate while the MacBook is asleep, shut down, disconnected from the network, or logged out if you use user-level launch agents. Keep it connected to power and configure macOS to prevent automatic sleep while plugged in. A closed laptop lid can also suspend work unless you use supported external-power/display arrangements.
@@ -115,5 +134,7 @@ Confirm all of the following in the dashboard: the exact CE and PE pair has been
 | --- | --- |
 | Phone cannot open the page | Confirm both devices are connected to the private network and run `tailscale serve status` on the MacBook. |
 | Worker is offline | Check `~/Library/Logs/tmt-watchdog.error.log`, `launchctl print gui/$(id -u)/com.tmt.watchdog`, Mac power state, and MySQL connectivity. |
-| Delta requests fail after internet outage | Recheck the MacBook’s current public IP and update Delta’s allowlist if your ISP changed it. |
+| Worker shows **degraded** with an IP allowlist message | Run `curl -4 https://api.ipify.org; echo`, update the Delta API key allowlist with that IPv4 address, then restart the worker after Delta applies the change. |
+| Delta requests fail after internet outage | Recheck the MacBook’s current public IP and update Delta’s allowlist if your ISP changed it. The worker keeps polling read-only requests, but it cannot protect an adopted pair until Delta read access returns. |
+| Position closed unexpectedly late at night | Confirm the installed revision contains the first-03:00-after-adoption IST rule, then check the event ledger for the actual recorded close reason. |
 | Dashboard works but phone is logged out | Use the private HTTPS URL, not a raw `http://192.168.x.x:3000` address. |
