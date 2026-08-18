@@ -7,14 +7,18 @@ import {
 } from "../delta";
 import {
   createAdoptedTradePair,
+  createScheduledEntryTrigger,
   createExportJob,
   getActiveTradePair,
   getLatestTradeSnapshot,
   getOrCreateRiskSettings,
   getTradePairById,
   getWatchdogState,
+  deleteScheduledEntryTrigger,
   listClosedTrades,
   listNotifications,
+  listScheduledEntryAttempts,
+  listScheduledEntryTriggers,
   listRealizedPnlEvents,
   listRecentTradeSnapshots,
   queueCloseRequest,
@@ -22,6 +26,7 @@ import {
   setManualHold,
   upsertDeltaCredential,
   updateRiskSettings,
+  updateScheduledEntryTrigger,
   updateExportJob,
 } from "../db";
 import { buildLiveMonitorWorkbook, buildTradeHistoryWorkbook } from "../excel-export";
@@ -49,6 +54,11 @@ const riskInput = z.object({
   exitMode: z.enum(["manual", "auto"]).optional(),
   autoProfitTargetInr: z.number().finite().positive().max(10_000_000).nullable().optional(),
   manualOnlyMode: z.boolean().optional(),
+  scheduledEntryEnabled: z.boolean().optional(),
+  scheduledEntryLots: z.number().int().min(1).max(10_000).optional(),
+  scheduledEntryPremiumMin: z.number().finite().positive().max(100_000).optional(),
+  scheduledEntryPremiumMax: z.number().finite().positive().max(100_000).optional(),
+  scheduledEntryConfirmation: z.string().optional(),
   liveArmed: z.boolean().optional(),
   liveArmConfirmation: z.string().optional(),
 });
@@ -209,7 +219,13 @@ export const tradingRouter = router({
       if (input.exitMode === "auto" && (!input.autoProfitTargetInr || input.autoProfitTargetInr <= 0)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Enter a positive INR net-profit target before enabling Auto exit mode." });
       }
-      const { liveArmConfirmation: _liveArmConfirmation, ...settingsInput } = input;
+      if (input.scheduledEntryEnabled === true) {
+        if (input.manualOnlyMode !== false) throw new TRPCError({ code: "BAD_REQUEST", message: "Disable Manual-only entries before enabling the demo scheduled entry." });
+        if (input.scheduledEntryConfirmation !== "ARM DEMO SCHEDULED ENTRY") throw new TRPCError({ code: "BAD_REQUEST", message: "Type ARM DEMO SCHEDULED ENTRY before enabling scheduled demo entry." });
+        if (!input.scheduledEntryLots || input.scheduledEntryLots <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Enter a positive scheduled-entry lot size." });
+        if (!input.scheduledEntryPremiumMin || !input.scheduledEntryPremiumMax || input.scheduledEntryPremiumMin >= input.scheduledEntryPremiumMax) throw new TRPCError({ code: "BAD_REQUEST", message: "Scheduled entry requires a valid minimum and maximum premium band." });
+      }
+      const { liveArmConfirmation: _liveArmConfirmation, scheduledEntryConfirmation: _scheduledEntryConfirmation, ...settingsInput } = input;
       const settings = await updateRiskSettings(ctx.user.id, {
         ...settingsInput,
         usdInr: input.usdInr?.toFixed(2),
@@ -218,6 +234,8 @@ export const tradingRouter = router({
         profitTrailStartInr: input.profitTrailStartInr?.toFixed(2),
         profitTrailDrawdownInr: input.profitTrailDrawdownInr?.toFixed(2),
         autoProfitTargetInr: input.autoProfitTargetInr === undefined ? undefined : input.autoProfitTargetInr === null ? null : input.autoProfitTargetInr.toFixed(2),
+        scheduledEntryPremiumMin: input.scheduledEntryPremiumMin?.toFixed(6),
+        scheduledEntryPremiumMax: input.scheduledEntryPremiumMax?.toFixed(6),
       });
       await recordTradeEvent({
         ownerId: ctx.user.id,
@@ -228,8 +246,43 @@ export const tradingRouter = router({
       return settings;
     }),
   }),
+  scheduledEntries: router({
+    list: protectedProcedure.query(({ ctx }) => listScheduledEntryTriggers(ctx.user.id)),
+    create: protectedProcedure.input(z.object({
+      label: z.string().trim().min(2).max(64),
+      timeIst: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use 24-hour HH:MM IST time."),
+      weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+      enabled: z.boolean().default(false),
+      lots: z.number().int().min(1).max(10_000).default(120),
+      premiumMin: z.number().finite().positive().max(100_000).default(85),
+      premiumMax: z.number().finite().positive().max(100_000).default(120),
+    }).refine(input => input.premiumMin < input.premiumMax, { message: "Premium minimum must be below premium maximum.", path: ["premiumMax"] })).mutation(async ({ ctx, input }) => {
+      if (input.enabled) throw new TRPCError({ code: "BAD_REQUEST", message: "Create scheduled-entry triggers disabled, then explicitly confirm activation." });
+      try {
+        const trigger = await createScheduledEntryTrigger({ ownerId: ctx.user.id, label: input.label, timeIst: input.timeIst, weekdays: Array.from(new Set(input.weekdays)).sort().join(","), enabled: input.enabled, lots: input.lots, premiumMin: input.premiumMin.toFixed(6), premiumMax: input.premiumMax.toFixed(6) });
+        await recordTradeEvent({ ownerId: ctx.user.id, level: "warning", eventType: "SCHEDULED_ENTRY_TRIGGER_CREATED", message: `Scheduled demo entry trigger created: ${trigger.label} at ${trigger.timeIst} IST.`, payload: { triggerId: trigger.id } });
+        return trigger;
+      } catch (error) { throw asTrpcError(error); }
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number().int().positive(), label: z.string().trim().min(2).max(64).optional(), timeIst: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(), weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(), enabled: z.boolean().optional(), confirmed: z.boolean().optional(), lots: z.number().int().min(1).max(10_000).optional(), premiumMin: z.number().finite().positive().max(100_000).optional(), premiumMax: z.number().finite().positive().max(100_000).optional(),
+    })).mutation(async ({ ctx, input }) => {
+      if (input.enabled === true && input.confirmed !== true) throw new TRPCError({ code: "BAD_REQUEST", message: "Confirm before enabling a scheduled demo-entry trigger." });
+      if (input.premiumMin !== undefined && input.premiumMax !== undefined && input.premiumMin >= input.premiumMax) throw new TRPCError({ code: "BAD_REQUEST", message: "Premium minimum must be below premium maximum." });
+      const { id, weekdays, premiumMin, premiumMax, confirmed: _confirmed, ...rest } = input;
+      try {
+        return await updateScheduledEntryTrigger(ctx.user.id, id, { ...rest, weekdays: weekdays ? Array.from(new Set(weekdays)).sort().join(",") : undefined, premiumMin: premiumMin?.toFixed(6), premiumMax: premiumMax?.toFixed(6) });
+      } catch (error) { throw asTrpcError(error); }
+    }),
+    remove: protectedProcedure.input(z.object({ id: z.number().int().positive(), confirmed: z.literal(true) })).mutation(async ({ ctx, input }) => {
+      await deleteScheduledEntryTrigger(ctx.user.id, input.id);
+      await recordTradeEvent({ ownerId: ctx.user.id, level: "warning", eventType: "SCHEDULED_ENTRY_TRIGGER_REMOVED", message: `Scheduled demo entry trigger ${input.id} was removed.`, payload: { triggerId: input.id } });
+      return { removed: true };
+    }),
+  }),
   history: router({
     closedTrades: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(250).default(100) })).query(({ ctx, input }) => listClosedTrades(ctx.user.id, input.limit)),
+    scheduledAttempts: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(50).default(10) })).query(({ ctx, input }) => listScheduledEntryAttempts(ctx.user.id, input.limit)),
     analytics: protectedProcedure
       .input(z.object({ range: z.enum(["7d", "15d", "30d", "all"]).default("7d") }))
       .query(async ({ ctx, input }) => {

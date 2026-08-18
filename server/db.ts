@@ -13,6 +13,8 @@ import {
   partialCloses,
   passwordResetTokens,
   riskSettings,
+  scheduledEntryAttempts,
+  scheduledEntryTriggers,
   tradeEvents,
   tradePairs,
   tradeSnapshots,
@@ -218,6 +220,10 @@ export async function updateRiskSettings(
     exitMode: "manual" | "auto";
     autoProfitTargetInr: string | null;
     manualOnlyMode: boolean;
+    scheduledEntryEnabled: boolean;
+    scheduledEntryLots: number;
+    scheduledEntryPremiumMin: string;
+    scheduledEntryPremiumMax: string;
     liveArmed: boolean;
   }>,
 ) {
@@ -243,6 +249,84 @@ export async function listActiveTradePairs() {
   return db.select().from(tradePairs).where(inArray(tradePairs.status, ["adopted", "closing", "emergency"])).orderBy(tradePairs.createdAt);
 }
 
+export async function listScheduledEntrySettings() {
+  const db = await requireDb();
+  return db.select().from(riskSettings).where(eq(riskSettings.scheduledEntryEnabled, true));
+}
+
+export async function listScheduledEntryTriggers(ownerId: number) {
+  const db = await requireDb();
+  return db.select().from(scheduledEntryTriggers).where(eq(scheduledEntryTriggers.ownerId, ownerId)).orderBy(scheduledEntryTriggers.timeIst);
+}
+
+export async function listEnabledScheduledEntryTriggers() {
+  const db = await requireDb();
+  return db.select().from(scheduledEntryTriggers).where(eq(scheduledEntryTriggers.enabled, true)).orderBy(scheduledEntryTriggers.timeIst);
+}
+
+export async function createScheduledEntryTrigger(input: { ownerId: number; label: string; timeIst: string; weekdays: string; enabled: boolean; lots: number; premiumMin: string; premiumMax: string }) {
+  const db = await requireDb();
+  const [result] = await db.insert(scheduledEntryTriggers).values(input);
+  const triggers = await db.select().from(scheduledEntryTriggers).where(eq(scheduledEntryTriggers.id, Number(result.insertId))).limit(1);
+  if (!triggers[0]) throw new Error("Unable to create the scheduled-entry trigger.");
+  return triggers[0];
+}
+
+export async function updateScheduledEntryTrigger(ownerId: number, triggerId: number, input: Partial<{ label: string; timeIst: string; weekdays: string; enabled: boolean; lots: number; premiumMin: string; premiumMax: string }>) {
+  const db = await requireDb();
+  await db.update(scheduledEntryTriggers).set(input).where(and(eq(scheduledEntryTriggers.id, triggerId), eq(scheduledEntryTriggers.ownerId, ownerId)));
+  const triggers = await db.select().from(scheduledEntryTriggers).where(and(eq(scheduledEntryTriggers.id, triggerId), eq(scheduledEntryTriggers.ownerId, ownerId))).limit(1);
+  if (!triggers[0]) throw new Error("Scheduled-entry trigger was not found.");
+  return triggers[0];
+}
+
+export async function deleteScheduledEntryTrigger(ownerId: number, triggerId: number) {
+  const db = await requireDb();
+  await db.delete(scheduledEntryTriggers).where(and(eq(scheduledEntryTriggers.id, triggerId), eq(scheduledEntryTriggers.ownerId, ownerId)));
+}
+
+export async function reserveScheduledEntryAttempt(input: { ownerId: number; triggerId: number; triggerTimeIst: string; istTradeDate: string; requestedLots: number }) {
+  const db = await requireDb();
+  const [result] = await db
+    .insert(scheduledEntryAttempts)
+    .values({ ownerId: input.ownerId, triggerId: input.triggerId, triggerTimeIst: input.triggerTimeIst, istTradeDate: input.istTradeDate, requestedLots: input.requestedLots, status: "started" })
+    .onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
+  const attempt = await db
+    .select()
+    .from(scheduledEntryAttempts)
+    .where(and(eq(scheduledEntryAttempts.ownerId, input.ownerId), eq(scheduledEntryAttempts.istTradeDate, input.istTradeDate), eq(scheduledEntryAttempts.triggerId, input.triggerId)))
+    .limit(1);
+  if (!attempt[0]) throw new Error("Unable to reserve the scheduled-entry attempt.");
+  return { attempt: attempt[0], reserved: Number(result.insertId) > 0 };
+}
+
+export async function updateScheduledEntryAttempt(
+  attemptId: number,
+  state: Partial<{
+    status: "started" | "opened" | "flattened" | "skipped" | "failed";
+    ceSymbol: string | null;
+    peSymbol: string | null;
+    ceProductId: number | null;
+    peProductId: number | null;
+    ceFilledLots: number;
+    peFilledLots: number;
+    error: string | null;
+  }>,
+) {
+  const db = await requireDb();
+  await db.update(scheduledEntryAttempts).set(state).where(eq(scheduledEntryAttempts.id, attemptId));
+}
+
+export async function listScheduledEntryAttempts(ownerId: number, limit = 10) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(scheduledEntryAttempts)
+    .where(eq(scheduledEntryAttempts.ownerId, ownerId))
+    .orderBy(desc(scheduledEntryAttempts.createdAt))
+    .limit(Math.min(50, Math.max(1, limit)));
+}
+
 export async function getTradePairById(ownerId: number, pairId: number) {
   const db = await requireDb();
   const result = await db
@@ -263,6 +347,7 @@ export async function createAdoptedTradePair(input: {
   ceEntry: string;
   peEntry: string;
   protectionStatus: string;
+  mode?: "manual" | "bot";
 }) {
   const db = await requireDb();
   const active = await getActiveTradePair(input.ownerId);
@@ -273,7 +358,7 @@ export async function createAdoptedTradePair(input: {
     ceStop: (Number(input.ceEntry) * 2).toFixed(6),
     peStop: (Number(input.peEntry) * 2).toFixed(6),
     remainingLots: input.lots,
-    mode: "manual",
+    mode: input.mode ?? "manual",
     status: "adopted",
   });
   const created = await getTradePairById(input.ownerId, Number(result.insertId));

@@ -51,3 +51,12 @@
 - [x] Extend manual matched-pair adoption, position lookup, and watchdog monitoring from BTC-only to approved BTC and Gold option underlyings.
 - [x] Show the adopted underlying clearly in live monitoring, trade history, exports, and operational diagnostics.
 - [x] Add BTC/Gold-specific validation and regression coverage without changing risk thresholds or live-order behavior.
+- [x] Design a fail-closed 10:00 PM IST autonomous-entry workflow with explicit mode, one-entry-per-session, contract-selection, fill-reconciliation, and live-arming gates.
+- [x] Implement a demo-first 10:00 PM IST BTC scheduled-entry setting using the documented 120-lot CE/PE non-directional strategy, with an explicit disabled-by-default arm switch.
+- [x] Persist one-entry-per-IST-session records, contract-selection audit data, and both-leg fill reconciliation results to prevent duplicate or orphaned entries.
+- [x] Expose scheduled-entry attempt history and fill-reconciliation details in the owner dashboard.
+- [x] Add regression coverage for zero-fill/no-fill scheduled entry attempts, then complete the demo-entry safety verification.
+- [x] Replace the single fixed 10:00 PM IST demo-entry schedule with owner-managed multiple enabled trigger times such as 09:30 AM and 10:00 PM.
+- [x] Enforce per-trigger-per-IST-date idempotency, active-pair suppression, audit visibility, and demo-only fill reconciliation for multiple scheduled triggers.
+- [x] Add router regression coverage for trigger creation, edit-time, confirmed enablement, disabling, and removal.
+- [x] Add duplicate-prevention regression coverage for per-owner trigger times and same-trigger same-IST-date attempts.

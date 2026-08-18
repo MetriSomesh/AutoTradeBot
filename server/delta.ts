@@ -306,6 +306,47 @@ export async function getShortOptionCandidates(credentials?: DeltaCredentialCont
     });
 }
 
+export type ScheduledBtcOptionCandidate = { productId: number; symbol: string; optionType: OptionType; bid: number; mark: number; expiry: string };
+
+export function istDateStamp(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}`;
+}
+
+export function nextIstOptionExpiryStamp(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const next = new Date(Date.UTC(Number(lookup.year), Number(lookup.month) - 1, Number(lookup.day) + 1));
+  return `${String(next.getUTCDate()).padStart(2, "0")}${String(next.getUTCMonth() + 1).padStart(2, "0")}${String(next.getUTCFullYear()).slice(-2)}`;
+}
+
+export async function selectScheduledBtcStrangle(input: { premiumMin: number; premiumMax: number; targetPremium?: number; now?: Date; credentials?: DeltaCredentialContext }) {
+  const now = input.now ?? new Date();
+  const expiry = nextIstOptionExpiryStamp(now);
+  const products = await getProducts(input.credentials);
+  const eligible = products
+    .map(product => ({ productId: numeric(product.id ?? product.product_id), symbol: String(product.symbol ?? ""), state: String(product.state ?? "live").toLowerCase() }))
+    .map(product => ({ ...product, parsed: /^([CP])-BTC-\d+-(\d{6})$/.exec(product.symbol) }))
+    .filter((product): product is { productId: number; symbol: string; state: string; parsed: RegExpExecArray } => product.productId > 0 && product.state === "live" && product.parsed !== null && product.parsed[2] === expiry);
+  if (!eligible.length) throw new DeltaApiError(`No live BTC CE/PE products were found for next-day IST expiry ${expiry}.`);
+  const quotes = await getTickers(eligible.map(product => product.symbol), input.credentials);
+  const candidates = eligible
+    .map(product => {
+      const quote = quotes.get(product.symbol);
+      return { productId: product.productId, symbol: product.symbol, optionType: product.parsed[1] === "C" ? ("CE" as const) : ("PE" as const), bid: quote?.bid ?? 0, mark: quote?.mark ?? 0, expiry };
+    })
+    .filter(candidate => candidate.bid >= input.premiumMin && candidate.bid <= input.premiumMax && candidate.mark > 0);
+  const target = input.targetPremium ?? (input.premiumMin + input.premiumMax) / 2;
+  const closest = (optionType: OptionType) => candidates
+    .filter(candidate => candidate.optionType === optionType)
+    .sort((a, b) => Math.abs(a.bid - target) - Math.abs(b.bid - target) || a.symbol.localeCompare(b.symbol))[0];
+  const ce = closest("CE");
+  const pe = closest("PE");
+  if (!ce || !pe) throw new DeltaApiError(`No liquid next-day BTC ${!ce ? "CE" : "PE"} candidate is inside the configured $${input.premiumMin}–$${input.premiumMax} sell-premium band.`);
+  return { ce, pe, expiry, targetPremium: target };
+}
+
 export async function verifyShortOption(input: { productId: number; optionType: OptionType; underlying?: SupportedOptionUnderlying }, credentials?: DeltaCredentialContext) {
   const position = await getPosition(input.productId, credentials, input.underlying);
   const parsed = parseSupportedOptionSymbol(position.symbol);

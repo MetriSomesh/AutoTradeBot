@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Activity, BarChart3, ChartNoAxesCombined, ClipboardList, KeyRound, LogOut, PanelLeft, ScanSearch, Settings2 } from "lucide-react";
+import { Activity, AlarmClock, BarChart3, ChartNoAxesCombined, ClipboardList, KeyRound, LogOut, PanelLeft, ScanSearch, Settings2 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -15,6 +15,7 @@ const menuItems = [
   { icon: ClipboardList, label: "Trade History", path: "/history" },
   { icon: BarChart3, label: "P&L Analytics", path: "/analytics" },
   { icon: Settings2, label: "Risk Settings", path: "/risk" },
+  { icon: AlarmClock, label: "Scheduled Entries", path: "/scheduled-entries" },
   { icon: KeyRound, label: "Account & Keys", path: "/account" },
   { icon: Activity, label: "Operational Status", path: "/status" },
 ];

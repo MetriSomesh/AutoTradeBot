@@ -7,12 +7,16 @@ import {
   closeShortPosition,
   describeDeltaConnectivityFailure,
   DeltaApiError,
+  filledSize,
   getDeltaRuntime,
   getPosition,
   getTickers,
+  placeOrder,
+  selectScheduledBtcStrangle,
 } from "./delta";
 import {
   createClosedTrade,
+  createAdoptedTradePair,
   createPartialClose,
   createNotification,
   getActiveTradePair,
@@ -20,16 +24,20 @@ import {
   getOrCreateRiskSettings,
   getWatchdogState,
   listActiveTradePairs,
+  listEnabledScheduledEntryTriggers,
   recordTradeEvent,
   recordTradeSnapshot,
+  reserveScheduledEntryAttempt,
   tryAcquireWorkerLease,
   updateCloseRequest,
   updatePairRuntimeState,
+  updateScheduledEntryAttempt,
   updateWatchdogState,
 } from "./db";
 import { calculatePairPnl, calculatePartialCloseLots, evaluateExit, shouldCloseAtAutoProfitTarget } from "./strategy";
 import { getUserDeltaCredentials } from "./user-delta";
 import { getUnderlyingDetails, underlyingFromOptionSymbol } from "../shared/option-underlying";
+import { assertDemoScheduledEntryArmed, isScheduledEntryTriggerDue } from "./scheduled-entry";
 
 const WORKER_ID = `tmt-watchdog-${process.pid}-${randomUUID().slice(0, 8)}`;
 const LEASE_NAME = "tmt-btc-options-watchdog";
@@ -299,8 +307,106 @@ export async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof g
   }
 }
 
+async function flattenScheduledEntryLegs(input: { ceProductId: number; ceSymbol: string; peProductId: number; peSymbol: string; credentials: Awaited<ReturnType<typeof getUserDeltaCredentials>> }) {
+  const closeIfShort = async (productId: number, symbol: string, clientOrderId: string) => {
+    const position = await getPosition(productId, input.credentials, "BTC");
+    if (position.size < 0) await closeShortPosition({ productId, symbol, credentials: input.credentials, clientOrderId });
+  };
+  const outcomes = await Promise.allSettled([
+    closeIfShort(input.ceProductId, input.ceSymbol, `tmtflatce${Date.now()}`.slice(0, 32)),
+    closeIfShort(input.peProductId, input.peSymbol, `tmtflatpe${Date.now()}`.slice(0, 32)),
+  ]);
+  const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+  if (failures.length) throw failures[0].reason;
+}
+
+export async function runScheduledEntryCycle(now = new Date()) {
+  const triggers = await listEnabledScheduledEntryTriggers();
+  for (const trigger of triggers) {
+    const schedule = isScheduledEntryTriggerDue({ timeIst: trigger.timeIst, weekdays: trigger.weekdays, now });
+    if (!schedule.due) continue;
+    const ownerId = trigger.ownerId;
+    let attemptId: number | null = null;
+    try {
+      const credentials = await getUserDeltaCredentials(ownerId);
+      const settings = await getOrCreateRiskSettings(ownerId);
+      assertDemoScheduledEntryArmed({
+        enabled: trigger.enabled,
+        manualOnlyMode: settings.manualOnlyMode,
+        credentialMode: credentials.mode,
+        serverEnabled: ENV.demoScheduledEntryEnabled,
+        serverAcknowledgement: ENV.demoScheduledEntryAcknowledgement,
+        expectedAcknowledgement: ENV.demoScheduledEntryAcknowledgementPhrase,
+      });
+      if (await getActiveTradePair(ownerId)) continue;
+      const requestedLots = trigger.lots;
+      const reservation = await reserveScheduledEntryAttempt({ ownerId, triggerId: trigger.id, triggerTimeIst: trigger.timeIst, istTradeDate: schedule.istTradeDate, requestedLots });
+      if (!reservation.reserved) continue;
+      attemptId = reservation.attempt.id;
+
+      const selected = await selectScheduledBtcStrangle({
+        premiumMin: asNumber(trigger.premiumMin),
+        premiumMax: asNumber(trigger.premiumMax),
+        credentials,
+        now,
+      });
+      await updateScheduledEntryAttempt(reservation.attempt.id, {
+        ceSymbol: selected.ce.symbol,
+        peSymbol: selected.pe.symbol,
+        ceProductId: selected.ce.productId,
+        peProductId: selected.pe.productId,
+      });
+      const orderOutcomes = await Promise.allSettled([
+        placeOrder({ productId: selected.ce.productId, symbol: selected.ce.symbol, side: "sell", size: requestedLots, orderType: "limit_order", limitPrice: selected.ce.bid, timeInForce: "ioc", credentials, clientOrderId: `tmtentce${reservation.attempt.id}`.slice(0, 32) }),
+        placeOrder({ productId: selected.pe.productId, symbol: selected.pe.symbol, side: "sell", size: requestedLots, orderType: "limit_order", limitPrice: selected.pe.bid, timeInForce: "ioc", credentials, clientOrderId: `tmtentpe${reservation.attempt.id}`.slice(0, 32) }),
+      ]);
+      const ceFilledLots = orderOutcomes[0].status === "fulfilled" ? filledSize(orderOutcomes[0].value) : 0;
+      const peFilledLots = orderOutcomes[1].status === "fulfilled" ? filledSize(orderOutcomes[1].value) : 0;
+      await updateScheduledEntryAttempt(reservation.attempt.id, { ceFilledLots, peFilledLots });
+      if (orderOutcomes.some(outcome => outcome.status === "rejected") || ceFilledLots !== requestedLots || peFilledLots !== requestedLots) {
+        await flattenScheduledEntryLegs({ ceProductId: selected.ce.productId, ceSymbol: selected.ce.symbol, peProductId: selected.pe.productId, peSymbol: selected.pe.symbol, credentials });
+        const orderError = orderOutcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected").map(outcome => outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)).join("; ");
+        await updateScheduledEntryAttempt(reservation.attempt.id, { status: "flattened", error: `IOC entry did not fill both ${requestedLots}-lot legs equally (CE=${ceFilledLots}, PE=${peFilledLots})${orderError ? `; ${orderError}` : ""}; all detected short legs were flattened.` });
+        await recordSafetyEvent({ ownerId, level: "critical", type: "SCHEDULED_ENTRY_FLATTENED", message: `Demo scheduled entry was flattened because IOC fills were not equal: CE=${ceFilledLots}, PE=${peFilledLots}.`, notify: true, payload: { attemptId: reservation.attempt.id, ce: selected.ce.symbol, pe: selected.pe.symbol } });
+        continue;
+      }
+      const [cePosition, pePosition] = await Promise.all([
+        getPosition(selected.ce.productId, credentials, "BTC"),
+        getPosition(selected.pe.productId, credentials, "BTC"),
+      ]);
+      if (cePosition.size !== -requestedLots || pePosition.size !== -requestedLots) {
+        await flattenScheduledEntryLegs({ ceProductId: selected.ce.productId, ceSymbol: selected.ce.symbol, peProductId: selected.pe.productId, peSymbol: selected.pe.symbol, credentials });
+        await updateScheduledEntryAttempt(reservation.attempt.id, { status: "flattened", error: `Post-entry reconciliation failed (CE=${cePosition.size}, PE=${pePosition.size}); all detected short legs were flattened.` });
+        await recordSafetyEvent({ ownerId, level: "critical", type: "SCHEDULED_ENTRY_RECONCILIATION_FAILED", message: "Demo scheduled entry was flattened because Delta positions did not match the requested paired size.", notify: true, payload: { attemptId: reservation.attempt.id } });
+        continue;
+      }
+      const pair = await createAdoptedTradePair({
+        ownerId,
+        ceSymbol: selected.ce.symbol,
+        peSymbol: selected.pe.symbol,
+        ceProductId: selected.ce.productId,
+        peProductId: selected.pe.productId,
+        lots: requestedLots,
+        ceEntry: (cePosition.entryPrice || selected.ce.bid).toFixed(6),
+        peEntry: (pePosition.entryPrice || selected.pe.bid).toFixed(6),
+        protectionStatus: "SCHEDULED_DEMO_ENTRY",
+        mode: "bot",
+      });
+      await updateScheduledEntryAttempt(reservation.attempt.id, { status: "opened" });
+      await recordSafetyEvent({ ownerId, pairId: pair.id, level: "warning", type: "SCHEDULED_DEMO_ENTRY_OPENED", message: `Demo 10:00 PM IST BTC short strangle opened and adopted: ${pair.ceSymbol} / ${pair.peSymbol}, ${requestedLots} lots each.`, notify: true, payload: { attemptId: reservation.attempt.id, expiry: selected.expiry, ceBid: selected.ce.bid, peBid: selected.pe.bid } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attemptId) {
+        await updateScheduledEntryAttempt(attemptId, { status: "failed", error: message });
+        await recordSafetyEvent({ ownerId, level: "critical", type: "SCHEDULED_ENTRY_FAILED", message: `Demo scheduled entry was not opened: ${message}`, notify: true, payload: { attemptId } });
+      }
+    }
+  }
+}
+
 export async function runCycle() {
   if (!(await tryAcquireWorkerLease(LEASE_NAME, WORKER_ID))) return;
+  await runScheduledEntryCycle();
   const pairs = await listActiveTradePairs();
   for (const pair of pairs) await runPairCycle(pair);
 }

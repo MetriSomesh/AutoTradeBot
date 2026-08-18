@@ -178,3 +178,20 @@ Confirm all of the following in the dashboard: the exact CE and PE pair has been
 | Delta requests fail after internet outage | Recheck the MacBook’s current public IP and update Delta’s allowlist if your ISP changed it. The worker keeps polling read-only requests, but it cannot protect an adopted pair until Delta read access returns. |
 | Position closed unexpectedly late at night | Confirm the installed revision contains the first-03:00-after-adoption IST rule, then check the event ledger for the actual recorded close reason. |
 | Dashboard works but phone is logged out | Use the private HTTPS URL, not a raw `http://192.168.x.x:3000` address. |
+
+## Optional demo-only scheduled BTC entries at multiple IST times
+
+This feature is **disabled by default**. It can submit orders only with a Delta **demo** credential; it intentionally refuses `paper` and `live` credentials. It is designed for controlled validation of the BTC short CE/PE workflow, not unattended live trading.
+
+The worker evaluates each enabled owner-managed trigger during its matching five-minute IST window. You can create independent times such as `09:30` and `22:00`, choose their weekdays, and set separate lots and premium bands. It selects live next-day BTC CE and PE products whose **sellable bid** is inside each trigger’s configured premium band, sells both legs with IOC orders, verifies exactly equal fills, and immediately attempts to flatten both legs if either fill is missing or unequal. Each trigger can attempt once per account, IST date, and trigger time.
+
+Add these server-only values to the MacBook environment file before restarting the worker:
+
+```bash
+TMT_DEMO_SCHEDULED_ENTRY_ENABLED=true
+TMT_DEMO_SCHEDULED_ENTRY_ACK=I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK
+```
+
+Then sign in, turn off **Manual-only entries** in **Risk Settings**, and open **Scheduled Entries** in the sidebar. Create each trigger disabled, for example `09:30` and `22:00` IST. Choose its days, 120 lots per leg, and premium band; then enable it only after the confirmation prompt. Edit a time later by selecting **Edit time** on that trigger. Keep `TMT_MODE=demo` and use a Delta demo credential. If the credential environment is `live`, no scheduled entry is submitted.
+
+Before using any trigger window, confirm that no manual pair is already active, the dashboard reports an operational worker, and the Demo API key remains IP-allowlisted. Only one active pair is supported, so later triggers skip while a pair remains adopted. Review the per-trigger entry time and resulting `SCHEDULED_DEMO_ENTRY_OPENED`, `SCHEDULED_ENTRY_FLATTENED`, or `SCHEDULED_ENTRY_FAILED` audit event in **Operational Status**.

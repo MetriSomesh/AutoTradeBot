@@ -90,6 +90,10 @@ export const riskSettings = mysqlTable("risk_settings", {
   exitMode: mysqlEnum("exit_mode", ["manual", "auto"]).notNull().default("manual"),
   autoProfitTargetInr: decimal("auto_profit_target_inr", { precision: 14, scale: 2 }),
   manualOnlyMode: boolean("manual_only_mode").notNull().default(true),
+  scheduledEntryEnabled: boolean("scheduled_entry_enabled").notNull().default(false),
+  scheduledEntryLots: int("scheduled_entry_lots").notNull().default(120),
+  scheduledEntryPremiumMin: decimal("scheduled_entry_premium_min", { precision: 18, scale: 6 }).notNull().default("85.000000"),
+  scheduledEntryPremiumMax: decimal("scheduled_entry_premium_max", { precision: 18, scale: 6 }).notNull().default("120.000000"),
   liveArmed: boolean("live_armed").notNull().default(false),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 }, table => [uniqueIndex("risk_settings_owner_unique").on(table.ownerId)]);
@@ -197,6 +201,45 @@ export const workerLeases = mysqlTable("worker_leases", {
   expiresAt: timestamp("expires_at").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
+
+export const scheduledEntryAttempts = mysqlTable("scheduled_entry_attempts", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerId: int("owner_id").notNull(),
+  triggerId: int("trigger_id").notNull().default(0),
+  triggerTimeIst: varchar("trigger_time_ist", { length: 5 }).notNull().default("22:00"),
+  istTradeDate: varchar("ist_trade_date", { length: 10 }).notNull(),
+  status: mysqlEnum("status", ["started", "opened", "flattened", "skipped", "failed"]).notNull().default("started"),
+  ceSymbol: varchar("ce_symbol", { length: 96 }),
+  peSymbol: varchar("pe_symbol", { length: 96 }),
+  ceProductId: bigint("ce_product_id", { mode: "number" }),
+  peProductId: bigint("pe_product_id", { mode: "number" }),
+  requestedLots: int("requested_lots").notNull(),
+  ceFilledLots: int("ce_filled_lots").notNull().default(0),
+  peFilledLots: int("pe_filled_lots").notNull().default(0),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  uniqueIndex("scheduled_entry_attempt_owner_date_trigger_unique").on(table.ownerId, table.istTradeDate, table.triggerId),
+  index("scheduled_entry_attempt_status_idx").on(table.status, table.createdAt),
+]);
+
+export const scheduledEntryTriggers = mysqlTable("scheduled_entry_triggers", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerId: int("owner_id").notNull(),
+  label: varchar("label", { length: 64 }).notNull(),
+  timeIst: varchar("time_ist", { length: 5 }).notNull(),
+  weekdays: varchar("weekdays", { length: 32 }).notNull().default("1,2,3,4,5"),
+  enabled: boolean("enabled").notNull().default(false),
+  lots: int("lots").notNull().default(120),
+  premiumMin: decimal("premium_min", { precision: 18, scale: 6 }).notNull().default("85.000000"),
+  premiumMax: decimal("premium_max", { precision: 18, scale: 6 }).notNull().default("120.000000"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  uniqueIndex("scheduled_entry_trigger_owner_time_unique").on(table.ownerId, table.timeIst),
+  index("scheduled_entry_trigger_enabled_idx").on(table.enabled, table.timeIst),
+]);
 
 export const watchdogStates = mysqlTable("watchdog_states", {
   id: int("id").autoincrement().primaryKey(),
