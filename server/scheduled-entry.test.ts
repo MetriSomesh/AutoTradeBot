@@ -19,6 +19,15 @@ describe("scheduled demo entry safeguards", () => {
     expect(isScheduledEntryTriggerDue({ timeIst: "22:00", weekdays: "1,2,3,4,5", now: morning })).toMatchObject({ due: false });
   });
 
+  it("keeps an enabled IST trigger due for its documented five-minute window", () => {
+    expect(isScheduledEntryTriggerDue({ timeIst: "19:53", weekdays: "1", now: new Date("2026-08-17T14:27:00.000Z") })).toMatchObject({ istTradeDate: "2026-08-17", weekday: 1, due: true });
+    expect(isScheduledEntryTriggerDue({ timeIst: "19:53", weekdays: "1", now: new Date("2026-08-17T14:28:00.000Z") })).toMatchObject({ due: false });
+  });
+
+  it("preserves the prior IST date and weekday for a five-minute window that crosses midnight", () => {
+    expect(isScheduledEntryTriggerDue({ timeIst: "23:59", weekdays: "1", now: new Date("2026-08-17T18:31:00.000Z") })).toMatchObject({ istTradeDate: "2026-08-17", weekday: 1, due: true });
+  });
+
   it("requires both the account and server demo-entry gates, never accepting a live credential", () => {
     const safe = { enabled: true, manualOnlyMode: false, credentialMode: "demo" as const, serverEnabled: true, serverAcknowledgement: "I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK", expectedAcknowledgement: "I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK" };
     expect(() => assertDemoScheduledEntryArmed(safe)).not.toThrow();

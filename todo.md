@@ -62,3 +62,7 @@
 - [x] Add duplicate-prevention regression coverage for per-owner trigger times and same-trigger same-IST-date attempts.
 - [x] Diagnose the missed 7:30 PM IST trigger and record a visible outcome for every due trigger, including blocked demo gates and active-pair skips.
 - [x] Verify the MacBook missed-trigger troubleshooting guide covers audit outcomes, demo gates, Manual-only mode, worker uptime, weekday/time matching, and Delta IP allowlisting.
+- [x] Diagnose the reported 7:53 PM IST scheduled trigger with no corresponding audit record and provide MacBook worker-log checks.
+- [x] Match each enabled IST trigger throughout its documented five-minute window so a brief worker delay cannot suppress both the entry attempt and audit record.
+- [x] Remove the unresolved optional analytics placeholder that crashes the MacBook production Express server when analytics values are absent.
+- [x] Verify and regression-test that the single persistent worker evaluates scheduled entries even when no manual CE/PE pair is adopted.

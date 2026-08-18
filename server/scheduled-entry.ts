@@ -29,10 +29,31 @@ export function isScheduledEntryTriggerDue(input: { timeIst: string; weekdays: s
   const clock = getScheduledEntryTime(input.now, input.windowMinutes);
   const match = /^(\d{2}):(\d{2})$/.exec(input.timeIst);
   if (!match) return { ...clock, due: false };
+  const triggerHour = Number(match[1]);
+  const triggerMinute = Number(match[2]);
+  if (triggerHour > 23 || triggerMinute > 59) return { ...clock, due: false };
+  const windowMinutes = Math.max(1, input.windowMinutes ?? 5);
   const enabledWeekdays = new Set(input.weekdays.split(",").map(value => Number(value.trim())).filter(value => Number.isInteger(value) && value >= 0 && value <= 6));
+  const currentMinuteOfDay = clock.hour * 60 + clock.minute;
+  const triggerMinuteOfDay = triggerHour * 60 + triggerMinute;
+  let elapsedMinutes = currentMinuteOfDay - triggerMinuteOfDay;
+  let istTradeDate = clock.istTradeDate;
+  let weekday = clock.weekday;
+  if (elapsedMinutes < 0) {
+    const midnightElapsedMinutes = elapsedMinutes + 24 * 60;
+    if (midnightElapsedMinutes < windowMinutes) {
+      elapsedMinutes = midnightElapsedMinutes;
+      const [year, month, day] = clock.istTradeDate.split("-").map(Number);
+      const previousIstDate = new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+      istTradeDate = previousIstDate;
+      weekday = (weekday + 6) % 7;
+    }
+  }
   return {
     ...clock,
-    due: enabledWeekdays.has(clock.weekday) && clock.hour === Number(match[1]) && clock.minute === Number(match[2]),
+    istTradeDate,
+    weekday,
+    due: enabledWeekdays.has(weekday) && elapsedMinutes >= 0 && elapsedMinutes < windowMinutes,
   };
 }
 

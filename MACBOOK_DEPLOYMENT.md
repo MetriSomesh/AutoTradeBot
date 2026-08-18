@@ -100,6 +100,8 @@ set -a; source "$HOME/Library/Application Support/TMT/tmt-dashboard.env"; set +a
 pnpm run worker
 ```
 
+Run **one** watchdog process only. It remains active even when Live Monitor is **idle** and no CE/PE pair has been adopted. Every five-second cycle first checks all enabled scheduled-entry triggers, then checks any active adopted pairs. Therefore, a missing adopted pair does not pause or disable the scheduled-entry scan. Do not start a second worker: the MySQL lease intentionally allows only one process to perform a cycle at a time.
+
 The rolling chart labels should then match the current IST clock without changing trade-history records or snapshot data.
 
 ## 2. Keep the Mac awake and supervised
@@ -208,3 +210,13 @@ After installing the observable-trigger release, every due trigger creates a row
 | `opened` | Both legs were reconciled and the pair was adopted; it should appear on Live Monitor. |
 
 For a missed trigger, confirm the trigger is **Enabled**, its selected weekday includes the current IST day, the worker process was already running before the five-minute window, and the environment file loaded by the worker contains both `TMT_DEMO_SCHEDULED_ENTRY_ENABLED=true` and `TMT_DEMO_SCHEDULED_ENTRY_ACK=I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK`. Also confirm **Manual-only entries** is off and that Delta has the MacBook's current public IPv4 allowlisted.
+
+An enabled `19:53` IST trigger is eligible from `19:53` through `19:57` IST; it is not eligible from `19:58` onward. If **Scheduled Demo Entry Audit** remains empty after that interval, the worker did not process the trigger. On the MacBook, run the following commands and retain the output for diagnosis:
+
+```bash
+tail -n 200 ~/Library/Logs/tmt-watchdog.log
+tail -n 200 ~/Library/Logs/tmt-watchdog.error.log
+launchctl print gui/$(id -u)/com.tmt.watchdog
+```
+
+The normal worker log must show a startup line containing `started; polling every 5s`. If it is absent, restart the worker service before the next trigger window. If the worker ran but the audit is still empty, verify the trigger is **Enabled** (not only saved), its time is exactly `19:53`, and the selected weekday is correct for the IST date.

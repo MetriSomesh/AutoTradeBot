@@ -7,10 +7,12 @@ import {
   getOrCreateRiskSettings,
   getPendingCloseRequestForPair,
   getWatchdogState,
+  listActiveTradePairs,
   listEnabledScheduledEntryTriggers,
   recordTradeEvent,
   recordTradeSnapshot,
   reserveScheduledEntryAttempt,
+  tryAcquireWorkerLease,
   updatePairRuntimeState,
   updateScheduledEntryAttempt,
   updateWatchdogState,
@@ -31,10 +33,12 @@ vi.mock("./db", async importActual => {
     getOrCreateRiskSettings: vi.fn(),
     getPendingCloseRequestForPair: vi.fn(),
     getWatchdogState: vi.fn(),
+    listActiveTradePairs: vi.fn(),
     listEnabledScheduledEntryTriggers: vi.fn(),
     recordTradeEvent: vi.fn(),
     recordTradeSnapshot: vi.fn(),
     reserveScheduledEntryAttempt: vi.fn(),
+    tryAcquireWorkerLease: vi.fn(),
     updatePairRuntimeState: vi.fn(),
     updateScheduledEntryAttempt: vi.fn(),
     updateWatchdogState: vi.fn(),
@@ -53,7 +57,7 @@ vi.mock("./delta", async importActual => ({
 }));
 vi.mock("./user-delta", () => ({ getUserDeltaCredentials: vi.fn() }));
 
-import { closePair, getPairSpotSymbol, markEmergency, markWatchdogDegraded, runPairCycle, runScheduledEntryCycle } from "./watchdog-worker";
+import { closePair, getPairSpotSymbol, markEmergency, markWatchdogDegraded, runCycle, runPairCycle, runScheduledEntryCycle } from "./watchdog-worker";
 
 const credentials = { mode: "demo" as const, baseUrl: "https://demo", apiKey: "key", apiSecret: "secret" };
 const goldPair = {
@@ -90,10 +94,12 @@ describe("watchdog fail-closed transitions", () => {
     vi.mocked(getPendingCloseRequestForPair).mockResolvedValue(undefined);
     vi.mocked(getUserDeltaCredentials).mockResolvedValue(credentials);
     vi.mocked(getWatchdogState).mockResolvedValue(undefined);
+    vi.mocked(listActiveTradePairs).mockResolvedValue([] as never);
     vi.mocked(listEnabledScheduledEntryTriggers).mockResolvedValue([] as never);
     vi.mocked(recordTradeEvent).mockResolvedValue(undefined);
     vi.mocked(recordTradeSnapshot).mockResolvedValue(undefined);
     vi.mocked(reserveScheduledEntryAttempt).mockResolvedValue({ attempt: { id: 91 }, reserved: true } as never);
+    vi.mocked(tryAcquireWorkerLease).mockResolvedValue(true);
     vi.mocked(updatePairRuntimeState).mockResolvedValue(undefined);
     vi.mocked(updateScheduledEntryAttempt).mockResolvedValue(undefined);
     vi.mocked(updateWatchdogState).mockResolvedValue({} as never);
@@ -130,6 +136,22 @@ describe("watchdog fail-closed transitions", () => {
 
     expect(reserveScheduledEntryAttempt).toHaveBeenCalledTimes(1);
     expect(reserveScheduledEntryAttempt).toHaveBeenCalledWith({ ownerId: 7, triggerId: 11, triggerTimeIst: "09:30", istTradeDate: "2026-08-17", requestedLots: 120 });
+  });
+
+  it("runs scheduled entry evaluation through the shared worker cycle when no manual pair exists", async () => {
+    ENV.demoScheduledEntryEnabled = true;
+    ENV.demoScheduledEntryAcknowledgement = ENV.demoScheduledEntryAcknowledgementPhrase;
+    vi.mocked(listEnabledScheduledEntryTriggers).mockResolvedValue([morningTrigger] as never);
+    vi.mocked(selectScheduledBtcStrangle).mockResolvedValue({ ce: { productId: 401, symbol: "C-BTC-65000-180826", bid: 100 }, pe: { productId: 402, symbol: "P-BTC-64000-180826", bid: 95 }, expiry: "180826" } as never);
+    vi.mocked(placeOrder).mockResolvedValue({ size: 120, unfilled_size: 0 } as never);
+    vi.mocked(getPosition).mockResolvedValueOnce({ size: -120, entryPrice: 100 } as never).mockResolvedValueOnce({ size: -120, entryPrice: 95 } as never);
+
+    await runCycle(new Date("2026-08-17T04:00:00.000Z"));
+
+    expect(tryAcquireWorkerLease).toHaveBeenCalledTimes(1);
+    expect(reserveScheduledEntryAttempt).toHaveBeenCalledWith({ ownerId: 7, triggerId: 11, triggerTimeIst: "09:30", istTradeDate: "2026-08-17", requestedLots: 120 });
+    expect(createAdoptedTradePair).toHaveBeenCalledWith(expect.objectContaining({ mode: "bot", ownerId: 7 }));
+    expect(listActiveTradePairs).toHaveBeenCalledTimes(1);
   });
 
   it("does not submit a second entry when the same trigger already reserved its IST date", async () => {

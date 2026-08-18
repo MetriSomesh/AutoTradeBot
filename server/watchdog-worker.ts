@@ -408,9 +408,9 @@ export async function runScheduledEntryCycle(now = new Date()) {
   }
 }
 
-export async function runCycle() {
+export async function runCycle(now = new Date()) {
   if (!(await tryAcquireWorkerLease(LEASE_NAME, WORKER_ID))) return;
-  await runScheduledEntryCycle();
+  await runScheduledEntryCycle(now);
   const pairs = await listActiveTradePairs();
   for (const pair of pairs) await runPairCycle(pair);
 }
