@@ -3,6 +3,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
+import { getUnderlyingDetails, type SupportedOptionUnderlying } from "@/lib/optionUnderlying";
 import { AlertTriangle, ArrowDownToLine, CheckCircle2, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -14,9 +15,12 @@ export default function ManualAdoption() {
   const candidates = trpc.trading.delta.manualCandidates.useQuery();
   const [ceProductId, setCeProductId] = useState<number | null>(null);
   const [peProductId, setPeProductId] = useState<number | null>(null);
-  const selectedCe = useMemo(() => candidates.data?.ce.find(item => item.productId === ceProductId), [candidates.data?.ce, ceProductId]);
-  const selectedPe = useMemo(() => candidates.data?.pe.find(item => item.productId === peProductId), [candidates.data?.pe, peProductId]);
-  const matchingLots = selectedCe && selectedPe && selectedCe.size === selectedPe.size;
+  const [underlying, setUnderlying] = useState<SupportedOptionUnderlying>("BTC");
+  const ceCandidates = useMemo(() => candidates.data?.ce.filter(item => item.underlying === underlying) ?? [], [candidates.data?.ce, underlying]);
+  const peCandidates = useMemo(() => candidates.data?.pe.filter(item => item.underlying === underlying) ?? [], [candidates.data?.pe, underlying]);
+  const selectedCe = useMemo(() => ceCandidates.find(item => item.productId === ceProductId), [ceCandidates, ceProductId]);
+  const selectedPe = useMemo(() => peCandidates.find(item => item.productId === peProductId), [peCandidates, peProductId]);
+  const matchingLots = selectedCe && selectedPe && selectedCe.size === selectedPe.size && selectedCe.underlying === selectedPe.underlying;
 
   const adopt = trpc.trading.trade.adoptManualPair.useMutation({
     onSuccess: async () => {
@@ -32,7 +36,7 @@ export default function ManualAdoption() {
       <header className="border-b border-[#2a2a30] pb-5">
         <p className="monitor-label">EXPLICIT ACCOUNT IMPORT</p>
         <h1 className="mt-2 text-2xl font-bold tracking-[-0.03em] text-[#e8e8ea]">Adopt a Manual CE / PE Pair</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-[#9a9aa2]">The dashboard reads your authenticated Delta account and allows one deliberate selection of an open short BTC call and put with equal lots. It never auto-adopts every position and does not change existing exchange brackets.</p>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-[#9a9aa2]">The dashboard reads your authenticated Delta account and allows one deliberate selection of an open short BTC or Gold Token (XAUT) call and put with equal lots. It never auto-adopts every position and does not change existing exchange brackets.</p>
       </header>
 
       <Alert className="border-[#D4734E]/35 bg-[#D4734E]/10 text-[#e8e8ea]">
@@ -46,23 +50,32 @@ export default function ManualAdoption() {
       {candidates.data ? (
         <>
           <section className="grid gap-4 md:grid-cols-2">
+            <article className="monitor-card md:col-span-2">
+              <p className="monitor-label">OPTION UNDERLYING</p>
+              <label className="mt-4 block text-xs font-medium text-[#e8e8ea]" htmlFor="underlying">Select one underlying</label>
+              <select id="underlying" value={underlying} onChange={event => { const next = event.target.value as SupportedOptionUnderlying; setUnderlying(next); setCeProductId(null); setPeProductId(null); }} className="mt-2 h-11 w-full rounded-xl border border-[#3a3a42] bg-[#121214] px-3 font-mono text-sm text-[#e8e8ea] outline-none focus:border-[#D4734E]">
+                <option value="BTC">BTC · Bitcoin</option>
+                <option value="XAUT">GOLD / XAUT · Tether Gold Token</option>
+              </select>
+              <p className="mt-3 text-xs leading-5 text-[#9a9aa2]">Only matching CE and PE legs from the same selected underlying can be adopted.</p>
+            </article>
             <article className="monitor-card">
-              <p className="monitor-label">SHORT BTC CALLS</p>
+              <p className="monitor-label">SHORT {getUnderlyingDetails(underlying).monitorLabel} CALLS</p>
               <label className="mt-5 block text-xs font-medium text-[#e8e8ea]" htmlFor="ce-product">CE position</label>
               <select id="ce-product" value={ceProductId ?? ""} onChange={event => setCeProductId(event.target.value ? Number(event.target.value) : null)} className="mt-2 h-11 w-full rounded-xl border border-[#3a3a42] bg-[#121214] px-3 font-mono text-sm text-[#e8e8ea] outline-none focus:border-[#D4734E]">
                 <option value="">Select a short CE position</option>
-                {candidates.data.ce.map(candidate => <option key={candidate.productId} value={candidate.productId}>{candidate.symbol} · {candidate.size} lots · entry ${candidate.entryPrice.toFixed(2)}</option>)}
+                {ceCandidates.map(candidate => <option key={candidate.productId} value={candidate.productId}>{candidate.symbol} · {candidate.size} lots · entry ${candidate.entryPrice.toFixed(2)}</option>)}
               </select>
-              <p className="mt-4 text-xs leading-5 text-[#9a9aa2]">Only open short `C-BTC-*` positions reported by Delta are listed.</p>
+              <p className="mt-4 text-xs leading-5 text-[#9a9aa2]">Only open short C-{underlying}-* positions reported by Delta are listed.</p>
             </article>
             <article className="monitor-card">
-              <p className="monitor-label">SHORT BTC PUTS</p>
+              <p className="monitor-label">SHORT {getUnderlyingDetails(underlying).monitorLabel} PUTS</p>
               <label className="mt-5 block text-xs font-medium text-[#e8e8ea]" htmlFor="pe-product">PE position</label>
               <select id="pe-product" value={peProductId ?? ""} onChange={event => setPeProductId(event.target.value ? Number(event.target.value) : null)} className="mt-2 h-11 w-full rounded-xl border border-[#3a3a42] bg-[#121214] px-3 font-mono text-sm text-[#e8e8ea] outline-none focus:border-[#D4734E]">
                 <option value="">Select a short PE position</option>
-                {candidates.data.pe.map(candidate => <option key={candidate.productId} value={candidate.productId}>{candidate.symbol} · {candidate.size} lots · entry ${candidate.entryPrice.toFixed(2)}</option>)}
+                {peCandidates.map(candidate => <option key={candidate.productId} value={candidate.productId}>{candidate.symbol} · {candidate.size} lots · entry ${candidate.entryPrice.toFixed(2)}</option>)}
               </select>
-              <p className="mt-4 text-xs leading-5 text-[#9a9aa2]">Only open short `P-BTC-*` positions reported by Delta are listed.</p>
+              <p className="mt-4 text-xs leading-5 text-[#9a9aa2]">Only open short P-{underlying}-* positions reported by Delta are listed.</p>
             </article>
           </section>
 

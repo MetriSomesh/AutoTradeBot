@@ -14,6 +14,14 @@ describe("TMT exit policy", () => {
     expect(pnl.feesInr).toBeGreaterThan(0);
   });
 
+  it("applies the explicit Gold/XAUT contract value while retaining the same coupled-stop policy", () => {
+    const goldPricing = { ceEntry: 82, peEntry: 61, ceMark: 164, peMark: 52, spot: 4_300, lots: 120, contractValue: 0.001 };
+    const goldPnl = calculatePairPnl(goldPricing, 83);
+    expect(goldPnl.pnlUsd).toBeCloseTo(-8.76);
+    const decision = evaluateExit({ pricing: goldPricing, pnl: goldPnl, risk, manualHold: false, priorProfitHighInr: null, now: overnightWindow });
+    expect(decision).toMatchObject({ action: "coupled_sl", shouldClose: true });
+  });
+
   it("closes both legs on a coupled 2× stop even when Manual Hold is enabled", () => {
     const decision = evaluateExit({ pricing: { ...pricing, ceMark: 200 }, pnl: calculatePairPnl({ ...pricing, ceMark: 200 }, 83), risk, manualHold: true, priorProfitHighInr: null, now: overnightWindow });
     expect(decision).toMatchObject({ action: "coupled_sl", shouldClose: true });

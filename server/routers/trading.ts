@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   getDeltaRuntime,
-  getShortBtcOptionCandidates,
+  getShortOptionCandidates,
   verifyShortOption,
 } from "../delta";
 import {
@@ -30,6 +30,7 @@ import { getUserDeltaCredentialStatus, getUserDeltaCredentials } from "../user-d
 import { protectedProcedure, router } from "../_core/trpc";
 import { resolveWorkspaceWatchdogState } from "../watchdog-status";
 import { buildPnlAnalytics } from "../pnl-analytics";
+import { getUnderlyingDetails, underlyingFromOptionSymbol } from "../../shared/option-underlying";
 
 function asTrpcError(error: unknown) {
   if (error instanceof TRPCError) return error;
@@ -60,7 +61,7 @@ export const tradingRouter = router({
     }),
     manualCandidates: protectedProcedure.query(async ({ ctx }) => {
       try {
-        const candidates = await getShortBtcOptionCandidates(await getUserDeltaCredentials(ctx.user.id));
+        const candidates = await getShortOptionCandidates(await getUserDeltaCredentials(ctx.user.id));
         return {
           ce: candidates.filter(candidate => candidate.optionType === "CE"),
           pe: candidates.filter(candidate => candidate.optionType === "PE"),
@@ -113,8 +114,12 @@ export const tradingRouter = router({
           const credentials = await getUserDeltaCredentials(ctx.user.id);
           const runtime = getDeltaRuntime(credentials);
           if (runtime.mode === "paper") throw new Error("Manual Delta positions cannot be adopted while the app is in paper mode.");
-          const [ce, pe] = await Promise.all([verifyShortOption(input.ceProductId, "C-BTC-", credentials), verifyShortOption(input.peProductId, "P-BTC-", credentials)]);
+          const [ce, pe] = await Promise.all([
+            verifyShortOption({ productId: input.ceProductId, optionType: "CE" }, credentials),
+            verifyShortOption({ productId: input.peProductId, optionType: "PE" }, credentials),
+          ]);
           if (ce.lots !== pe.lots) throw new Error(`Manual CE/PE sizes must match; CE=${ce.lots}, PE=${pe.lots}.`);
+          if (ce.underlying !== pe.underlying) throw new Error(`Manual CE/PE pairs must share one underlying; CE=${ce.underlying}, PE=${pe.underlying}.`);
           const pair = await createAdoptedTradePair({
             ownerId: ctx.user.id,
             ceSymbol: ce.symbol,
@@ -132,7 +137,7 @@ export const tradingRouter = router({
             level: "info",
             eventType: "MANUAL_PAIR_ADOPTED",
             message: `Owner confirmed adoption of ${pair.ceSymbol} and ${pair.peSymbol}, ${pair.lots} lots each.`,
-            payload: { ceProductId: pair.ceProductId, peProductId: pair.peProductId },
+            payload: { ceProductId: pair.ceProductId, peProductId: pair.peProductId, underlying: ce.underlying },
           });
           return pair;
         } catch (error) {
@@ -257,6 +262,7 @@ export const tradingRouter = router({
         const snapshot = pair ? await getLatestTradeSnapshot(pair.id) : undefined;
         const workbook = await buildLiveMonitorWorkbook(pair && snapshot ? {
           capturedAt: snapshot.capturedAt,
+          underlyingLabel: (() => { const underlying = underlyingFromOptionSymbol(pair.ceSymbol); return underlying ? getUnderlyingDetails(underlying).monitorLabel : "Underlying"; })(),
           spot: snapshot.spot,
           ceEntry: pair.ceEntry,
           peEntry: pair.peEntry,

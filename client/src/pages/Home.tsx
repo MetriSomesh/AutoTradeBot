@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { formatIstTime } from "@/lib/istTime";
+import { getUnderlyingDetails, underlyingFromOptionSymbol } from "@/lib/optionUnderlying";
 import { getWatchdogBadgePresentation } from "@/lib/watchdogDisplay";
 import { Activity, AlertTriangle, CircleOff, RefreshCw, ShieldCheck, XOctagon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -71,6 +72,8 @@ export default function Home() {
   }
 
   const pair = status.data?.pair;
+  const underlying = pair ? underlyingFromOptionSymbol(pair.ceSymbol) : null;
+  const underlyingDetails = underlying ? getUnderlyingDetails(underlying) : null;
   const snapshot = status.data?.snapshot;
   const worker = status.data?.state;
   const net = Number(snapshot?.netInr ?? 0);
@@ -84,7 +87,7 @@ export default function Home() {
       <header className="flex flex-col gap-4 border-b border-[#2a2a30] pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-xl font-bold tracking-[-0.03em] text-[#e8e8ea] sm:text-2xl">TMT BTC <span className="text-[#D4734E]">Decay-Sell</span> Monitor</h1>
+            <h1 className="text-xl font-bold tracking-[-0.03em] text-[#e8e8ea] sm:text-2xl">TMT {underlyingDetails?.monitorLabel ?? "Options"} <span className="text-[#D4734E]">Decay-Sell</span> Monitor</h1>
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] ${workerTone}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${workerBadge.dot === "healthy" ? "bg-[#3ddc84]" : workerBadge.dot === "emergency" ? "bg-[#ff6b6b]" : workerBadge.dot === "neutral" ? "bg-[#9a9aa2]" : "bg-[#D4734E]"}`} />
               {workerBadge.label}
@@ -100,7 +103,7 @@ export default function Home() {
       {!pair ? (
         <section className="monitor-card flex min-h-80 flex-col items-center justify-center text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[#D4734E]/30 bg-[#D4734E]/10 text-[#D4734E]"><CircleOff className="h-6 w-6" /></div>
-          <h2 className="mt-5 text-lg font-semibold text-[#e8e8ea]">No adopted BTC option pair</h2>
+          <h2 className="mt-5 text-lg font-semibold text-[#e8e8ea]">No adopted option pair</h2>
           <p className="mt-2 max-w-md text-sm leading-6 text-[#9a9aa2]">Use Manual Adoption to select one verified short CE and one short PE with matching lots. The worker will stay idle until an owner explicitly adopts the pair.</p>
           <Button className="mt-6 bg-[#D4734E] text-[#121214] hover:bg-[#e5835e]" onClick={() => (window.location.href = "/adoption")}>Adopt Pair</Button>
         </section>
@@ -108,7 +111,7 @@ export default function Home() {
         <>
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <article className="monitor-card">
-              <p className="monitor-label">BTC SPOT</p>
+              <p className="monitor-label">{underlyingDetails?.monitorLabel ?? "UNDERLYING"} SPOT</p>
               <p className="mt-3 font-mono text-2xl font-bold tabular-nums text-[#e8e8ea]">{hasLiveSnapshot ? usd(Number(snapshot?.spot)) : "—"}</p>
               <p className="mt-3 text-xs text-[#9a9aa2]">Last poll: {worker?.lastPollAt ? formatIstTime(worker.lastPollAt) : "waiting"}</p>
             </article>

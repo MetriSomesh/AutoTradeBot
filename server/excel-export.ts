@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { getUnderlyingDetails, underlyingFromOptionSymbol } from "../shared/option-underlying";
 
 type ClosedTradeRow = {
   closedAt: Date;
@@ -17,6 +18,7 @@ type ClosedTradeRow = {
 
 type LiveRow = {
   capturedAt: Date;
+  underlyingLabel: string;
   spot: string;
   ceEntry: string;
   peEntry: string;
@@ -81,14 +83,15 @@ export async function buildTradeHistoryWorkbook(trades: ClosedTradeRow[]) {
   workbook.created = new Date();
 
   const tradesSheet = workbook.addWorksheet("TRADES");
-  tradesSheet.addRow(["Close Time (IST)", "Date", "CE Symbol", "PE Symbol", "Lots", "CE Entry", "CE Exit", "PE Entry", "PE Exit", "P&L USD", "P&L INR", "Fees INR", "Net INR", "Note"]);
+  tradesSheet.addRow(["Close Time (IST)", "Date", "Underlying", "CE Symbol", "PE Symbol", "Lots", "CE Entry", "CE Exit", "PE Entry", "PE Exit", "P&L USD", "P&L INR", "Fees INR", "Net INR", "Note"]);
   for (const trade of trades) {
     const grossInr = number(trade.netInr) + number(trade.feesInr);
-    tradesSheet.addRow([formatTimestamp(trade.closedAt), formatDate(trade.closedAt), trade.ceSymbol, trade.peSymbol, trade.lots, number(trade.ceEntry), number(trade.ceExit), number(trade.peEntry), number(trade.peExit), number(trade.pnlUsd), grossInr, number(trade.feesInr), number(trade.netInr), trade.note ?? ""]);
+    const underlying = underlyingFromOptionSymbol(trade.ceSymbol);
+    tradesSheet.addRow([formatTimestamp(trade.closedAt), formatDate(trade.closedAt), underlying ? getUnderlyingDetails(underlying).monitorLabel : "UNKNOWN", trade.ceSymbol, trade.peSymbol, trade.lots, number(trade.ceEntry), number(trade.ceExit), number(trade.peEntry), number(trade.peExit), number(trade.pnlUsd), grossInr, number(trade.feesInr), number(trade.netInr), trade.note ?? ""]);
   }
   styleHeader(tradesSheet);
-  finalizeWorksheet(tradesSheet, [21, 13, 25, 25, 8, 11, 11, 11, 11, 12, 12, 12, 12, 48]);
-  [6, 7, 8, 9, 10, 11, 12, 13].forEach(column => { tradesSheet.getColumn(column).numFmt = "0.00"; });
+  finalizeWorksheet(tradesSheet, [21, 13, 15, 25, 25, 8, 11, 11, 11, 11, 12, 12, 12, 12, 48]);
+  [7, 8, 9, 10, 11, 12, 13, 14].forEach(column => { tradesSheet.getColumn(column).numFmt = "0.00"; });
 
   const daily = new Map<string, { trades: number; net: number; gross: number }>();
   const weekly = new Map<string, { start: string; end: string; trades: number; net: number; gross: number }>();
@@ -129,7 +132,7 @@ export async function buildLiveMonitorWorkbook(row: LiveRow | null) {
   workbook.creator = "TMT Trading Dashboard";
   workbook.created = new Date();
   const worksheet = workbook.addWorksheet("LIVE P&L");
-  worksheet.addRow(["Time (IST)", "BTC Price $", "CE Entry", "CE Current", "CE SL", "PE Entry", "PE Current", "PE SL", "P&L USD", "P&L INR", "Brokerage ₹", "Net ₹", "Status"]);
+  worksheet.addRow(["Time (IST)", `${row?.underlyingLabel ?? "Underlying"} Price $`, "CE Entry", "CE Current", "CE SL", "PE Entry", "PE Current", "PE SL", "P&L USD", "P&L INR", "Brokerage ₹", "Net ₹", "Status"]);
   if (row) {
     worksheet.addRow([formatTimestamp(row.capturedAt), number(row.spot), number(row.ceEntry), number(row.ceMark), number(row.ceStop), number(row.peEntry), number(row.peMark), number(row.peStop), number(row.pnlUsd), number(row.pnlInr), number(row.feesInr), number(row.netInr), row.status]);
   }

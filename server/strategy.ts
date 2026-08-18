@@ -12,6 +12,7 @@ export type PairPricing = {
   peMark: number;
   spot: number;
   lots: number;
+  contractValue?: number;
 };
 
 export type PnlCalculation = {
@@ -42,8 +43,9 @@ export function shouldCloseAtAutoProfitTarget(input: { exitMode: "manual" | "aut
 }
 
 export function calculatePairPnl(pricing: PairPricing, usdInr: number): PnlCalculation {
-  const pnlUsd = ((pricing.ceEntry - pricing.ceMark) + (pricing.peEntry - pricing.peMark)) * 0.001 * pricing.lots;
-  const fee = (premium: number) => Math.min(pricing.lots * 0.001 * pricing.spot * 0.0001, premium * 0.001 * pricing.lots * 0.035);
+  const contractValue = pricing.contractValue ?? 0.001;
+  const pnlUsd = ((pricing.ceEntry - pricing.ceMark) + (pricing.peEntry - pricing.peMark)) * contractValue * pricing.lots;
+  const fee = (premium: number) => Math.min(pricing.lots * contractValue * pricing.spot * 0.0001, premium * contractValue * pricing.lots * 0.035);
   const feesInr = (fee(pricing.ceEntry) + fee(pricing.peEntry) + fee(pricing.ceMark) + fee(pricing.peMark)) * 1.18 * usdInr;
   const pnlInr = pnlUsd * usdInr;
   return { pnlUsd, pnlInr, feesInr, netInr: pnlInr - feesInr };

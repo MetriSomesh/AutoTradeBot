@@ -46,3 +46,8 @@
 - [x] Improve the IP-allowlist watchdog recovery flow and document the exact Delta unblock-and-restart checks for a rejected authenticated position lookup.
 - [x] Correct the Live Monitor rolling watchdog-history chart labels so snapshot times use explicit Asia/Kolkata (IST).
 - [x] Configure the MySQL client session timezone as UTC so valid watchdog snapshot instants are read correctly without rewriting historical snapshot rows.
+- [x] Assess and document a viable free or low-cost hosted-backend topology with a MacBook-hosted frontend, including persistent watchdog, MySQL, HTTPS, credential, and Delta outbound-IP constraints.
+- [x] Assess AWS free-tier VPS suitability for the persistent backend/watchdog, stable Delta allowlisting IP, MySQL placement, and a MacBook-hosted frontend.
+- [x] Extend manual matched-pair adoption, position lookup, and watchdog monitoring from BTC-only to approved BTC and Gold option underlyings.
+- [x] Show the adopted underlying clearly in live monitoring, trade history, exports, and operational diagnostics.
+- [x] Add BTC/Gold-specific validation and regression coverage without changing risk thresholds or live-order behavior.

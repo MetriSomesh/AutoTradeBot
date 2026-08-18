@@ -29,6 +29,7 @@ import {
 } from "./db";
 import { calculatePairPnl, calculatePartialCloseLots, evaluateExit, shouldCloseAtAutoProfitTarget } from "./strategy";
 import { getUserDeltaCredentials } from "./user-delta";
+import { getUnderlyingDetails, underlyingFromOptionSymbol } from "../shared/option-underlying";
 
 const WORKER_ID = `tmt-watchdog-${process.pid}-${randomUUID().slice(0, 8)}`;
 const LEASE_NAME = "tmt-btc-options-watchdog";
@@ -39,11 +40,20 @@ const asNumber = (value: string | number | null | undefined) => Number(value ?? 
 const decimal = (value: number, places = 2) => (Number.isFinite(value) ? value : 0).toFixed(places);
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+export function getPairSpotSymbol(ceSymbol: string) {
+  const underlying = underlyingFromOptionSymbol(ceSymbol);
+  if (!underlying) throw new DeltaApiError(`Unsupported option underlying in ${ceSymbol}.`);
+  return getUnderlyingDetails(underlying).spotSymbol;
+}
+
 function pairExitValues(pair: {
+  ceSymbol: string;
   ceEntry: string;
   peEntry: string;
   lots: number;
 }, ceMark: number, peMark: number, spot: number, usdInr: number) {
+  const underlying = underlyingFromOptionSymbol(pair.ceSymbol);
+  if (!underlying) throw new DeltaApiError(`Unsupported option underlying in ${pair.ceSymbol}.`);
   return calculatePairPnl(
     {
       ceEntry: asNumber(pair.ceEntry),
@@ -52,6 +62,7 @@ function pairExitValues(pair: {
       peMark,
       spot,
       lots: pair.lots,
+      contractValue: getUnderlyingDetails(underlying).contractValue,
     },
     usdInr,
   );
@@ -156,10 +167,11 @@ export async function closePair(input: {
     ]);
 
     const quotes = input.prices ?? (() => undefined)();
-    const freshQuotes = quotes ? undefined : await getTickers([pair.ceSymbol, pair.peSymbol, "BTCUSD"], input.credentials);
+    const spotSymbol = getPairSpotSymbol(pair.ceSymbol);
+    const freshQuotes = quotes ? undefined : await getTickers([pair.ceSymbol, pair.peSymbol, spotSymbol], input.credentials);
     const ceMark = quotes?.ceMark ?? freshQuotes?.get(pair.ceSymbol)?.mark ?? 0;
     const peMark = quotes?.peMark ?? freshQuotes?.get(pair.peSymbol)?.mark ?? 0;
-    const spot = quotes?.spot ?? freshQuotes?.get("BTCUSD")?.mark ?? 0;
+    const spot = quotes?.spot ?? freshQuotes?.get(spotSymbol)?.mark ?? 0;
     if (ceMark <= 0 || peMark <= 0 || spot <= 0) {
       throw new DeltaApiError("Unable to record valid exit marks after reduce-only close.");
     }
@@ -230,7 +242,7 @@ export async function closePair(input: {
   }
 }
 
-async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof getActiveTradePair>>>) {
+export async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof getActiveTradePair>>>) {
   const ownerId = pair.ownerId;
   try {
     const [risk, credentials] = await Promise.all([getOrCreateRiskSettings(ownerId), getUserDeltaCredentials(ownerId)]);
@@ -241,10 +253,11 @@ async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof getActiv
     }
 
     if (getDeltaRuntime(credentials).mode === "paper") throw new DeltaApiError("An adopted pair cannot be protected with a paper-mode Delta credential.");
+    const spotSymbol = getPairSpotSymbol(pair.ceSymbol);
     const [cePosition, pePosition, quotes] = await Promise.all([
       getPosition(pair.ceProductId, credentials),
       getPosition(pair.peProductId, credentials),
-      getTickers([pair.ceSymbol, pair.peSymbol, "BTCUSD"], credentials),
+      getTickers([pair.ceSymbol, pair.peSymbol, spotSymbol], credentials),
     ]);
     if (cePosition.size >= 0 || pePosition.size >= 0) {
       const side = cePosition.size >= 0 && pePosition.size >= 0 ? "both positions" : cePosition.size >= 0 ? "CE position" : "PE position";
@@ -254,8 +267,8 @@ async function runPairCycle(pair: NonNullable<Awaited<ReturnType<typeof getActiv
 
     const ceMark = quotes.get(pair.ceSymbol)?.mark ?? 0;
     const peMark = quotes.get(pair.peSymbol)?.mark ?? 0;
-    const spot = quotes.get("BTCUSD")?.mark ?? 0;
-    if (ceMark <= 0 || peMark <= 0 || spot <= 0) throw new DeltaApiError("A current CE, PE, or BTCUSD mark is unavailable.");
+    const spot = quotes.get(spotSymbol)?.mark ?? 0;
+    if (ceMark <= 0 || peMark <= 0 || spot <= 0) throw new DeltaApiError(`A current CE, PE, or ${spotSymbol} mark is unavailable.`);
     const effectiveLots = Math.max(1, pair.remainingLots || pair.lots);
     const pnl = pairExitValues({ ...pair, lots: effectiveLots }, ceMark, peMark, spot, asNumber(risk.usdInr));
     const watchdog = await getWatchdogState(ownerId);

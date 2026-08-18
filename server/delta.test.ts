@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENV } from "./_core/env";
-import { assertLiveCloseArmed, describeDeltaConnectivityFailure, getTickers, verifyShortOption } from "./delta";
+import { assertLiveCloseArmed, describeDeltaConnectivityFailure, getShortOptionCandidates, getTickers, verifyShortOption } from "./delta";
 
 const originalFetch = global.fetch;
 const originalKey = ENV.deltaApiKey;
@@ -52,8 +52,8 @@ describe("Delta response boundary", () => {
     ENV.deltaApiSecret = "test-secret";
     ENV.deltaMode = "demo";
     global.fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ success: true, result: { product_id: 42, product_symbol: "C-BTC-65000-010126", size: "-120", entry_price: "100" } }), { status: 200 }))) as typeof fetch;
-    await expect(verifyShortOption(42, "C-BTC-")).resolves.toMatchObject({ productId: 42, lots: 120, entryPrice: 100 });
-    await expect(verifyShortOption(42, "P-BTC-")).rejects.toThrow("not an open short P BTC option");
+    await expect(verifyShortOption({ productId: 42, optionType: "CE", underlying: "BTC" })).resolves.toMatchObject({ productId: 42, lots: 120, entryPrice: 100, underlying: "BTC" });
+    await expect(verifyShortOption({ productId: 42, optionType: "PE", underlying: "BTC" })).rejects.toThrow("not an open short PE BTC option");
   });
 
   it("falls back to the BTC position list when a demo product-specific lookup returns invalid_date", async () => {
@@ -65,9 +65,53 @@ describe("Delta response boundary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [{ product_id: 191827, product_symbol: "C-BTC-65000-010126", size: "-1", entry_price: "100" }] }), { status: 200 }));
     global.fetch = fetchMock as typeof fetch;
 
-    await expect(verifyShortOption(191827, "C-BTC-")).resolves.toMatchObject({ productId: 191827, lots: 1, entryPrice: 100 });
+    await expect(verifyShortOption({ productId: 191827, optionType: "CE" })).resolves.toMatchObject({ productId: 191827, lots: 1, entryPrice: 100 });
     expect(fetchMock.mock.calls).toHaveLength(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("underlying_asset_symbol=BTC");
+  });
+
+  it("discovers XAUT Gold calls and puts only from the supported XAUT position list", async () => {
+    ENV.deltaApiKey = "test-key";
+    ENV.deltaApiSecret = "test-secret";
+    ENV.deltaMode = "demo";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [{ product_id: 9, product_symbol: "C-BTC-65000-010126", size: "-1", entry_price: "100" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [
+        { product_id: 101, product_symbol: "C-XAUT-4350-180826", size: "-3", entry_price: "82" },
+        { product_id: 102, product_symbol: "P-XAUT-4300-180826", size: "-3", entry_price: "61" },
+      ] }), { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    await expect(getShortOptionCandidates()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ productId: 101, optionType: "CE", underlying: "XAUT", underlyingLabel: "Gold Token" }),
+      expect.objectContaining({ productId: 102, optionType: "PE", underlying: "XAUT", underlyingLabel: "Gold Token" }),
+    ]));
+    expect(String(fetchMock.mock.calls[1][0])).toContain("underlying_asset_symbol=XAUT");
+  });
+
+  it("keeps BTC candidate discovery available when the separate XAUT list is temporarily unavailable", async () => {
+    ENV.deltaApiKey = "test-key";
+    ENV.deltaApiSecret = "test-secret";
+    ENV.deltaMode = "demo";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [{ product_id: 9, product_symbol: "C-BTC-65000-010126", size: "-1", entry_price: "100" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error: { code: "unsupported_underlying" } }), { status: 400 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    await expect(getShortOptionCandidates()).resolves.toEqual([expect.objectContaining({ productId: 9, underlying: "BTC" })]);
+  });
+
+  it("falls back through the XAUT position list for a Gold product-specific invalid_date response", async () => {
+    ENV.deltaApiKey = "test-key";
+    ENV.deltaApiSecret = "test-secret";
+    ENV.deltaMode = "demo";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error: { code: "invalid_date" } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: [{ product_id: 146957, product_symbol: "C-XAUT-4420-170826", size: "-1", entry_price: "82" }] }), { status: 200 }));
+    global.fetch = fetchMock as typeof fetch;
+
+    await expect(verifyShortOption({ productId: 146957, optionType: "CE", underlying: "XAUT" })).resolves.toMatchObject({ underlying: "XAUT", lots: 1 });
+    expect(String(fetchMock.mock.calls[1][0])).toContain("underlying_asset_symbol=XAUT");
   });
 
   it("fails closed for live reduce-only actions until all server and owner arming gates are present", () => {

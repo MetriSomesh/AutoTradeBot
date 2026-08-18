@@ -1,5 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { ENV } from "./_core/env";
+import {
+  getUnderlyingDetails,
+  parseSupportedOptionSymbol,
+  SUPPORTED_OPTION_UNDERLYINGS,
+  type OptionType,
+  type SupportedOptionUnderlying,
+} from "../shared/option-underlying";
 
 export type DeltaMode = "paper" | "demo" | "live";
 export type DeltaCredentialContext = { apiKey: string; apiSecret: string; baseUrl: string; mode: DeltaMode };
@@ -237,7 +244,7 @@ export async function getPositionsForUnderlying(underlyingAssetSymbol = "BTC", c
   return result.map(normalizePosition).filter((position): position is DeltaPosition => position !== null);
 }
 
-export async function getPosition(productId: number, credentials?: DeltaCredentialContext) {
+export async function getPosition(productId: number, credentials?: DeltaCredentialContext, underlying?: SupportedOptionUnderlying) {
   let directFailure: unknown;
   try {
     const result = await retryRead(() => request<Record<string, unknown> | Array<Record<string, unknown>>>("/v2/positions", {
@@ -257,8 +264,11 @@ export async function getPosition(productId: number, credentials?: DeltaCredenti
   // `invalid_date` response. The underlying-scoped position list contains the
   // same authoritative open position and is supported by both demo and live.
   try {
-    const fallback = (await getPositionsForUnderlying("BTC", credentials)).find(position => position.productId === productId);
-    if (fallback) return fallback;
+    const fallbackUnderlyings = underlying ? [underlying] : SUPPORTED_OPTION_UNDERLYINGS;
+    for (const candidateUnderlying of fallbackUnderlyings) {
+      const fallback = (await getPositionsForUnderlying(candidateUnderlying, credentials)).find(position => position.productId === productId);
+      if (fallback) return fallback;
+    }
   } catch (fallbackFailure) {
     if (!directFailure) directFailure = fallbackFailure;
   }
@@ -267,26 +277,41 @@ export async function getPosition(productId: number, credentials?: DeltaCredenti
   throw new DeltaApiError(`Delta position lookup for product ${productId} could not be verified: ${detail}`);
 }
 
-export async function getShortBtcOptionCandidates(credentials?: DeltaCredentialContext) {
+export async function getShortOptionCandidates(credentials?: DeltaCredentialContext) {
   if (configuredMode(credentials) === "paper") throw new DeltaApiError("Manual Delta positions are unavailable while the account is in paper mode.");
-  const positions = await getPositionsForUnderlying("BTC", credentials);
-  return positions
-    .filter(position => position.size < 0 && /^(C|P)-BTC-/.test(position.symbol))
-    .map(position => ({
-      productId: position.productId,
-      symbol: position.symbol,
-      size: Math.abs(position.size),
-      signedSize: position.size,
-      entryPrice: position.entryPrice,
-      realizedPnl: position.realizedPnl,
-      optionType: position.symbol.startsWith("C-BTC-") ? ("CE" as const) : ("PE" as const),
-    }));
+  const responses = await Promise.allSettled(SUPPORTED_OPTION_UNDERLYINGS.map(underlying => getPositionsForUnderlying(underlying, credentials)));
+  const positionLists = responses
+    .filter((response): response is PromiseFulfilledResult<DeltaPosition[]> => response.status === "fulfilled")
+    .map(response => response.value);
+  if (!positionLists.length) {
+    const failure = responses.find((response): response is PromiseRejectedResult => response.status === "rejected");
+    throw failure?.reason ?? new DeltaApiError("Delta did not return any supported option position lists.");
+  }
+  return positionLists.flat()
+    .map(position => ({ position, option: parseSupportedOptionSymbol(position.symbol) }))
+    .filter(({ position, option }) => position.size < 0 && option !== null)
+    .map(({ position, option }) => {
+      const parsed = option!;
+      return {
+        productId: position.productId,
+        symbol: position.symbol,
+        size: Math.abs(position.size),
+        signedSize: position.size,
+        entryPrice: position.entryPrice,
+        realizedPnl: position.realizedPnl,
+        optionType: parsed.optionType,
+        underlying: parsed.underlying,
+        underlyingLabel: getUnderlyingDetails(parsed.underlying).label,
+      };
+    });
 }
 
-export async function verifyShortOption(productId: number, expectedPrefix: "C-BTC-" | "P-BTC-", credentials?: DeltaCredentialContext) {
-  const position = await getPosition(productId, credentials);
-  if (position.size >= 0 || !position.symbol.startsWith(expectedPrefix)) {
-    throw new DeltaApiError(`Product ${productId} is not an open short ${expectedPrefix.slice(0, 1)} BTC option.`);
+export async function verifyShortOption(input: { productId: number; optionType: OptionType; underlying?: SupportedOptionUnderlying }, credentials?: DeltaCredentialContext) {
+  const position = await getPosition(input.productId, credentials, input.underlying);
+  const parsed = parseSupportedOptionSymbol(position.symbol);
+  const expectedLabel = `${input.optionType} ${input.underlying ?? "supported"}`;
+  if (position.size >= 0 || !parsed || parsed.optionType !== input.optionType || (input.underlying && parsed.underlying !== input.underlying)) {
+    throw new DeltaApiError(`Product ${input.productId} is not an open short ${expectedLabel} option.`);
   }
   let entryPrice = position.entryPrice;
   if (entryPrice <= 0) {
@@ -294,8 +319,18 @@ export async function verifyShortOption(productId: number, expectedPrefix: "C-BT
     entryPrice = quote?.mark ?? 0;
   }
   if (entryPrice <= 0) throw new DeltaApiError(`${position.symbol} has no usable entry or mark price.`);
-  return { productId: position.productId, symbol: position.symbol, lots: Math.abs(position.size), entryPrice };
+  return {
+    productId: position.productId,
+    symbol: position.symbol,
+    lots: Math.abs(position.size),
+    entryPrice,
+    underlying: parsed.underlying,
+    contractValue: getUnderlyingDetails(parsed.underlying).contractValue,
+  };
 }
+
+/** @deprecated Use getShortOptionCandidates for BTC and Gold/XAUT manual adoption. */
+export const getShortBtcOptionCandidates = getShortOptionCandidates;
 
 export async function placeOrder(input: {
   productId: number;
@@ -363,7 +398,8 @@ export function filledSize(order: DeltaOrder) {
 }
 
 export async function closeShortPosition(input: { productId: number; symbol: string; clientOrderId?: string; size?: number; credentials?: DeltaCredentialContext }) {
-  const position = await getPosition(input.productId, input.credentials);
+  const underlying = parseSupportedOptionSymbol(input.symbol)?.underlying;
+  const position = await getPosition(input.productId, input.credentials, underlying);
   if (position.size >= 0) return { skipped: true, reason: "position is already flat or no longer short", position } as const;
   const positionSize = Math.abs(Math.trunc(position.size));
   const size = input.size === undefined ? positionSize : Math.min(positionSize, Math.trunc(input.size));

@@ -26,7 +26,7 @@ describe("manual pair adoption", () => {
   });
 
   it("requires two matching verified short legs before creating an adopted pair", async () => {
-    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 120, entryPrice: 90 });
+    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100, underlying: "BTC", contractValue: 0.001 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 120, entryPrice: 90, underlying: "BTC", contractValue: 0.001 });
     vi.mocked(createAdoptedTradePair).mockResolvedValue(adoptedPair as never);
     await expect(caller().trade.adoptManualPair({ ceProductId: 41, peProductId: 42, confirmed: true })).resolves.toMatchObject({ id: 44 });
     expect(createAdoptedTradePair).toHaveBeenCalledWith(expect.objectContaining({ ownerId: 7, lots: 120, protectionStatus: "MANUAL_ADOPTED" }));
@@ -34,16 +34,22 @@ describe("manual pair adoption", () => {
   });
 
   it("rejects unequal selected lot sizes without persisting a pair", async () => {
-    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 60, entryPrice: 90 });
+    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100, underlying: "BTC", contractValue: 0.001 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 60, entryPrice: 90, underlying: "BTC", contractValue: 0.001 });
     await expect(caller().trade.adoptManualPair({ ceProductId: 41, peProductId: 42, confirmed: true })).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("sizes must match") });
     expect(createAdoptedTradePair).not.toHaveBeenCalled();
   });
 
   it("allows an authenticated local account to adopt only its own verified pair", async () => {
     const localUser = { ...account, id: 21, username: "other", openId: "local:other", role: "user" as const };
-    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 120, entryPrice: 90 });
+    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: adoptedPair.ceSymbol, lots: 120, entryPrice: 100, underlying: "BTC", contractValue: 0.001 }).mockResolvedValueOnce({ productId: 42, symbol: adoptedPair.peSymbol, lots: 120, entryPrice: 90, underlying: "BTC", contractValue: 0.001 });
     vi.mocked(createAdoptedTradePair).mockResolvedValue({ ...adoptedPair, ownerId: localUser.id } as never);
     await expect(caller(localUser).trade.adoptManualPair({ ceProductId: 41, peProductId: 42, confirmed: true })).resolves.toMatchObject({ ownerId: 21 });
+  });
+
+  it("rejects a matched-size BTC/XAUT selection before it can be adopted", async () => {
+    vi.mocked(verifyShortOption).mockResolvedValueOnce({ productId: 41, symbol: "C-BTC-65000-010126", lots: 120, entryPrice: 100, underlying: "BTC", contractValue: 0.001 }).mockResolvedValueOnce({ productId: 42, symbol: "P-XAUT-4300-180826", lots: 120, entryPrice: 90, underlying: "XAUT", contractValue: 0.001 });
+    await expect(caller().trade.adoptManualPair({ ceProductId: 41, peProductId: 42, confirmed: true })).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("share one underlying") });
+    expect(createAdoptedTradePair).not.toHaveBeenCalled();
   });
 });
 
