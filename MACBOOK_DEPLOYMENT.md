@@ -195,3 +195,16 @@ TMT_DEMO_SCHEDULED_ENTRY_ACK=I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK
 Then sign in, turn off **Manual-only entries** in **Risk Settings**, and open **Scheduled Entries** in the sidebar. Create each trigger disabled, for example `09:30` and `22:00` IST. Choose its days, 120 lots per leg, and premium band; then enable it only after the confirmation prompt. Edit a time later by selecting **Edit time** on that trigger. Keep `TMT_MODE=demo` and use a Delta demo credential. If the credential environment is `live`, no scheduled entry is submitted.
 
 Before using any trigger window, confirm that no manual pair is already active, the dashboard reports an operational worker, and the Demo API key remains IP-allowlisted. Only one active pair is supported, so later triggers skip while a pair remains adopted. Review the per-trigger entry time and resulting `SCHEDULED_DEMO_ENTRY_OPENED`, `SCHEDULED_ENTRY_FLATTENED`, or `SCHEDULED_ENTRY_FAILED` audit event in **Operational Status**.
+
+### A configured trigger did not adopt a pair
+
+After installing the observable-trigger release, every due trigger creates a row in **Operational Status → Scheduled Demo Entry Audit**. Interpret it before changing the trigger time:
+
+| Audit result | Meaning and next check |
+| --- | --- |
+| `failed` | The trigger reached its IST window but was blocked by a demo credential, Manual-only entries, a missing server gate, an IP allowlist error, unavailable candidates, or an order/reconciliation failure. Read the stored error text. |
+| `skipped` | An active pair already existed, or the same trigger had already attempted that IST date. No new order was sent. |
+| `flattened` | The CE and PE IOC fills were zero, partial, or unequal, so the worker attempted to flatten any detected short leg. |
+| `opened` | Both legs were reconciled and the pair was adopted; it should appear on Live Monitor. |
+
+For a missed trigger, confirm the trigger is **Enabled**, its selected weekday includes the current IST day, the worker process was already running before the five-minute window, and the environment file loaded by the worker contains both `TMT_DEMO_SCHEDULED_ENTRY_ENABLED=true` and `TMT_DEMO_SCHEDULED_ENTRY_ACK=I_ACCEPT_DEMO_SCHEDULED_ENTRY_RISK`. Also confirm **Manual-only entries** is off and that Delta has the MacBook's current public IPv4 allowlisted.

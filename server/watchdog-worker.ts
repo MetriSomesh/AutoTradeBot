@@ -328,6 +328,10 @@ export async function runScheduledEntryCycle(now = new Date()) {
     const ownerId = trigger.ownerId;
     let attemptId: number | null = null;
     try {
+      const requestedLots = trigger.lots;
+      const reservation = await reserveScheduledEntryAttempt({ ownerId, triggerId: trigger.id, triggerTimeIst: trigger.timeIst, istTradeDate: schedule.istTradeDate, requestedLots });
+      if (!reservation.reserved) continue;
+      attemptId = reservation.attempt.id;
       const credentials = await getUserDeltaCredentials(ownerId);
       const settings = await getOrCreateRiskSettings(ownerId);
       assertDemoScheduledEntryArmed({
@@ -338,11 +342,11 @@ export async function runScheduledEntryCycle(now = new Date()) {
         serverAcknowledgement: ENV.demoScheduledEntryAcknowledgement,
         expectedAcknowledgement: ENV.demoScheduledEntryAcknowledgementPhrase,
       });
-      if (await getActiveTradePair(ownerId)) continue;
-      const requestedLots = trigger.lots;
-      const reservation = await reserveScheduledEntryAttempt({ ownerId, triggerId: trigger.id, triggerTimeIst: trigger.timeIst, istTradeDate: schedule.istTradeDate, requestedLots });
-      if (!reservation.reserved) continue;
-      attemptId = reservation.attempt.id;
+      if (await getActiveTradePair(ownerId)) {
+        await updateScheduledEntryAttempt(attemptId, { status: "skipped", error: "Skipped because an active adopted pair already exists for this account." });
+        await recordSafetyEvent({ ownerId, level: "warning", type: "SCHEDULED_ENTRY_SKIPPED_ACTIVE_PAIR", message: `Scheduled ${trigger.timeIst} IST demo entry skipped because an active pair already exists.`, notify: false, payload: { attemptId, triggerId: trigger.id } });
+        continue;
+      }
 
       const selected = await selectScheduledBtcStrangle({
         premiumMin: asNumber(trigger.premiumMin),

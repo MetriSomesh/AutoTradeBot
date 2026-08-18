@@ -145,6 +145,28 @@ describe("watchdog fail-closed transitions", () => {
     expect(placeOrder).not.toHaveBeenCalled();
   });
 
+  it("records a visible failed attempt when a due trigger is blocked before order selection", async () => {
+    vi.mocked(listEnabledScheduledEntryTriggers).mockResolvedValue([morningTrigger] as never);
+
+    await runScheduledEntryCycle(new Date("2026-08-17T04:00:00.000Z"));
+
+    expect(updateScheduledEntryAttempt).toHaveBeenCalledWith(91, expect.objectContaining({ status: "failed", error: expect.stringContaining("server-side demo entry gates") }));
+    expect(recordTradeEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "SCHEDULED_ENTRY_FAILED", payload: expect.objectContaining({ attemptId: 91 }) }));
+  });
+
+  it("records a visible skipped attempt when a due trigger finds an active pair", async () => {
+    ENV.demoScheduledEntryEnabled = true;
+    ENV.demoScheduledEntryAcknowledgement = ENV.demoScheduledEntryAcknowledgementPhrase;
+    vi.mocked(listEnabledScheduledEntryTriggers).mockResolvedValue([morningTrigger] as never);
+    vi.mocked(getActiveTradePair).mockResolvedValue(goldPair as never);
+
+    await runScheduledEntryCycle(new Date("2026-08-17T04:00:00.000Z"));
+
+    expect(updateScheduledEntryAttempt).toHaveBeenCalledWith(91, expect.objectContaining({ status: "skipped", error: expect.stringContaining("active adopted pair") }));
+    expect(recordTradeEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "SCHEDULED_ENTRY_SKIPPED_ACTIVE_PAIR" }));
+    expect(selectScheduledBtcStrangle).not.toHaveBeenCalled();
+  });
+
   it("flattens a partial scheduled IOC fill and never adopts an orphaned BTC leg", async () => {
     ENV.demoScheduledEntryEnabled = true;
     ENV.demoScheduledEntryAcknowledgement = ENV.demoScheduledEntryAcknowledgementPhrase;

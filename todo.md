@@ -60,3 +60,5 @@
 - [x] Enforce per-trigger-per-IST-date idempotency, active-pair suppression, audit visibility, and demo-only fill reconciliation for multiple scheduled triggers.
 - [x] Add router regression coverage for trigger creation, edit-time, confirmed enablement, disabling, and removal.
 - [x] Add duplicate-prevention regression coverage for per-owner trigger times and same-trigger same-IST-date attempts.
+- [x] Diagnose the missed 7:30 PM IST trigger and record a visible outcome for every due trigger, including blocked demo gates and active-pair skips.
+- [x] Verify the MacBook missed-trigger troubleshooting guide covers audit outcomes, demo gates, Manual-only mode, worker uptime, weekday/time matching, and Delta IP allowlisting.
