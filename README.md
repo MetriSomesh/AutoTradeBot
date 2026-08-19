@@ -6,13 +6,21 @@
 
 ## Screenshots
 
-The repository includes only **credential-free** screenshots. Authenticated trading views are deliberately not published with account, order, position, or P&L data.
+The gallery uses credential-free or privacy-redacted interface captures. It does not include real API credentials, account identifiers, orders, positions, balances, trade history, or P&L results.
 
 | Local sign-in | First-time local account setup |
 | --- | --- |
 | ![TMT local sign-in screen](docs/screenshots/sign-in.png) | ![TMT local account creation screen](docs/screenshots/create-account.png) |
 
-For a Live Monitor, Risk Settings, Scheduled Demo Entry Audit, or P&L Analytics screenshot, capture it locally and redact usernames, public IPs, key fingerprints, account IDs, order IDs, balances, symbols if sensitive, and trade/P&L data before committing. See [README screenshot notes](docs/README_SCREENSHOT_NOTES.md).
+| Manual CE/PE pair adoption | Risk Settings |
+| --- | --- |
+| ![TMT Manual Adoption screen](docs/screenshots/manual-adoption.png) | ![TMT Risk Settings screen](docs/screenshots/risk-settings.png) |
+
+| Operational Status |
+| --- |
+| ![TMT Operational Status screen](docs/screenshots/operational-status.png) |
+
+The Manual Adoption, Risk Settings, and Operational Status images show empty-state or configuration-only views with the original owner identity replaced by a generic local label. Their asset-by-asset privacy review is recorded in [README screenshot review](docs/README_SCREENSHOT_REVIEW.md). For a Live Monitor, Scheduled Demo Entry Audit, Trade History, or P&L Analytics capture, redact usernames, public IPs, key fingerprints, account IDs, order IDs, balances, symbols if sensitive, and all trade/P&L data before committing. See [README screenshot notes](docs/README_SCREENSHOT_NOTES.md).
 
 ## What it provides
 
